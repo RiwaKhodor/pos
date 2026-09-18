@@ -66,6 +66,7 @@ export function ItemForm({
     ...initial,
   });
   const [error, setError] = useState("");
+  const [success, setSuccess] = useState("");
   const [scanHint, setScanHint] = useState(
     mode === "create"
       ? "Scan barcode here first, then fill the rest."
@@ -109,9 +110,11 @@ export function ItemForm({
     nameRef.current?.focus();
   }
 
-  async function save(closeAfter: boolean) {
+  async function save() {
     setError("");
+    setSuccess("");
     setSaving(true);
+    const creating = mode === "create" && !form.id;
     const payload = {
       name: form.name,
       sku: form.sku || null,
@@ -133,9 +136,9 @@ export function ItemForm({
     };
 
     const res = await fetch(
-      mode === "create" ? "/api/products" : `/api/products/${form.id}`,
+      creating ? "/api/products" : `/api/products/${form.id}`,
       {
-        method: mode === "create" ? "POST" : "PATCH",
+        method: creating ? "POST" : "PATCH",
         headers: { "Content-Type": "application/json" },
         body: JSON.stringify(payload),
       }
@@ -148,16 +151,13 @@ export function ItemForm({
       return;
     }
 
-    if (closeAfter) {
-      router.push("/items");
-      router.refresh();
-      return;
-    }
-
-    if (mode === "create") {
-      router.push(`/items/${data.product.id}`);
-      router.refresh();
-      return;
+    if (creating && data.product?.id) {
+      setForm((prev) => ({ ...prev, id: data.product.id }));
+      setSuccess(
+        `Item added${data.product.name ? `: ${data.product.name}` : ""}.`
+      );
+    } else {
+      setSuccess("Item saved.");
     }
 
     router.refresh();
@@ -165,7 +165,7 @@ export function ItemForm({
 
   async function onSubmit(e: FormEvent) {
     e.preventDefault();
-    await save(false);
+    await save();
   }
 
   async function removeItem() {
@@ -430,12 +430,20 @@ export function ItemForm({
         </div>
       ) : null}
 
+      {success ? (
+        <div className="mt-3 border border-emerald-400 bg-emerald-50 px-3 py-2 text-sm font-medium text-emerald-800">
+          {success}
+        </div>
+      ) : null}
+
       <div className="desk-actions">
         <button
           type="button"
           className="desk-btn"
           onClick={() => {
             setForm(emptyForm);
+            setError("");
+            setSuccess("");
             setScanHint("Scan barcode here first, then fill the rest.");
             router.push("/items/new");
             setTimeout(() => barcodeRef.current?.focus(), 50);
@@ -455,7 +463,7 @@ export function ItemForm({
           type="button"
           className="desk-btn"
           disabled={saving}
-          onClick={() => save(true)}
+          onClick={() => save()}
         >
           Save/Close
         </button>
