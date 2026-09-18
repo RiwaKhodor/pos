@@ -1,0 +1,140 @@
+generator client {
+  provider = "prisma-client-js"
+}
+
+datasource db {
+  provider  = "postgresql"
+  url       = env("DATABASE_URL")
+  directUrl = env("DIRECT_URL")
+}
+
+model User {
+  id           String   @id @default(cuid())
+  name         String
+  email        String   @unique
+  passwordHash String
+  role         String // OWNER | EMPLOYEE
+  active       Boolean  @default(true)
+  createdAt    DateTime @default(now())
+  updatedAt    DateTime @updatedAt
+  sales        Sale[]
+}
+
+model Category {
+  id        String    @id @default(cuid())
+  name      String    @unique
+  createdAt DateTime  @default(now())
+  updatedAt DateTime  @updatedAt
+  products  Product[]
+}
+
+model Product {
+  id             String     @id @default(cuid())
+  name           String
+  sku            String?    @unique
+  barcode        String?
+  description    String?
+  unit           String     @default("Pcs")
+  price          Decimal    @db.Decimal(12, 2)
+  cost           Decimal    @default(0) @db.Decimal(12, 2)
+  customsDuty    Decimal    @default(0) @db.Decimal(12, 4) // per-unit customs duty
+  wholesalePrice Decimal    @default(0) @db.Decimal(12, 2)
+  stock          Int        @default(0)
+  lowStockAt     Int        @default(5)
+  maxStock       Int        @default(0)
+  active         Boolean    @default(true)
+  showInPos      Boolean    @default(true)
+  trackQty       Boolean    @default(true)
+  categoryId     String?
+  category       Category?  @relation(fields: [categoryId], references: [id])
+  containerId    String?
+  container      Container? @relation(fields: [containerId], references: [id], onDelete: SetNull)
+  createdAt      DateTime   @default(now())
+  updatedAt      DateTime   @updatedAt
+  saleItems      SaleItem[]
+}
+
+model Container {
+  id        String    @id @default(cuid())
+  code      String    @unique
+  name      String
+  note      String?
+  arrivedAt DateTime?
+  totalDuty Decimal   @default(0) @db.Decimal(12, 2)
+  createdAt DateTime  @default(now())
+  updatedAt DateTime  @updatedAt
+  products  Product[]
+}
+
+model Customer {
+  id        String   @id @default(cuid())
+  name      String
+  email     String?
+  phone     String?
+  createdAt DateTime @default(now())
+  updatedAt DateTime @updatedAt
+  sales     Sale[]
+}
+
+model PaymentMethod {
+  id        String   @id @default(cuid())
+  name      String   @unique
+  active    Boolean  @default(true)
+  createdAt DateTime @default(now())
+  updatedAt DateTime @updatedAt
+  sales     Sale[]
+}
+
+model Sale {
+  id              String        @id @default(cuid())
+  receiptNumber   String        @unique
+  subtotal        Decimal       @db.Decimal(12, 2)
+  discount        Decimal       @default(0) @db.Decimal(12, 2)
+  tax             Decimal       @default(0) @db.Decimal(12, 2)
+  total           Decimal       @db.Decimal(12, 2)
+  pricingMode     String        @default("REGULAR") // REGULAR | WHOLESALE | VOLUME
+  cashierId       String
+  cashier         User          @relation(fields: [cashierId], references: [id])
+  customerId      String?
+  customer        Customer?     @relation(fields: [customerId], references: [id])
+  paymentMethodId String
+  paymentMethod   PaymentMethod @relation(fields: [paymentMethodId], references: [id])
+  createdAt       DateTime      @default(now())
+  items           SaleItem[]
+}
+
+model SaleItem {
+  id        String  @id @default(cuid())
+  saleId    String
+  sale      Sale    @relation(fields: [saleId], references: [id], onDelete: Cascade)
+  productId String
+  product   Product @relation(fields: [productId], references: [id])
+  name      String
+  quantity  Int
+  unitPrice Decimal @db.Decimal(12, 2)
+  unitCost  Decimal @default(0) @db.Decimal(12, 4)
+  lineTotal Decimal @db.Decimal(12, 2)
+}
+
+model Expense {
+  id        String   @id @default(cuid())
+  amount    Decimal  @db.Decimal(12, 2)
+  note      String
+  date      DateTime @default(now())
+  createdAt DateTime @default(now())
+  updatedAt DateTime @updatedAt
+}
+
+model StoreSettings {
+  id            String  @id @default("default")
+  storeName     String  @default("My Store")
+  currency      String  @default("USD")
+  taxRate       Decimal @default(0) @db.Decimal(8, 4)
+  address       String?
+  phone         String?
+  receiptFooter String?
+  // Volume discount % when cart subtotal reaches these amounts
+  volumeDisc100 Decimal @default(5) @db.Decimal(8, 4)
+  volumeDisc200 Decimal @default(10) @db.Decimal(8, 4)
+  volumeDisc300 Decimal @default(15) @db.Decimal(8, 4)
+}
