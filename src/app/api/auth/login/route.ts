@@ -91,7 +91,19 @@ export async function POST(request: Request) {
     }
     return response;
   } catch (error) {
+    // Writes the real error to the Vercel logs so we can see what failed
+    console.error("LOGIN ERROR:", error);
+
     if (!isDbUnavailable(error)) return authErrorResponse(error);
+
+    // On the owner website there is no offline mode, so show a clear message
+    if (isOwnerWeb()) {
+      return NextResponse.json(
+        { error: "Cannot reach the database. Please try again in a moment." },
+        { status: 503 }
+      );
+    }
+
     const known = findKnownUser(email);
     if (!known || !known.active) {
       return NextResponse.json(
