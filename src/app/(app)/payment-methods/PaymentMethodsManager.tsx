@@ -12,6 +12,7 @@ type Method = {
 
 export function PaymentMethodsManager({ methods }: { methods: Method[] }) {
   const router = useRouter();
+  const [rows, setRows] = useState(methods);
   const [name, setName] = useState("");
   const [error, setError] = useState("");
 
@@ -28,16 +29,34 @@ export function PaymentMethodsManager({ methods }: { methods: Method[] }) {
       setError(data.error || "Failed to create method");
       return;
     }
+    const method = data.method as Method;
+    setRows((current) => [...current.filter((row) => row.id !== method.id), method]);
     setName("");
     router.refresh();
   }
 
   async function toggleActive(method: Method) {
-    await fetch(`/api/payment-methods/${method.id}`, {
+    const next = !method.active;
+    setRows((current) =>
+      current.map((row) => (row.id === method.id ? { ...row, active: next } : row))
+    );
+    const res = await fetch(`/api/payment-methods/${method.id}`, {
       method: "PATCH",
       headers: { "Content-Type": "application/json" },
-      body: JSON.stringify({ active: !method.active }),
+      body: JSON.stringify({ active: next }),
     });
+    if (!res.ok) {
+      if (res.status < 500) {
+        setRows((current) =>
+          current.map((row) =>
+            row.id === method.id ? { ...row, active: method.active } : row
+          )
+        );
+        const data = await res.json().catch(() => ({}));
+        alert(data.error || "Could not update this payment method");
+      }
+      return;
+    }
     router.refresh();
   }
 
@@ -68,7 +87,7 @@ export function PaymentMethodsManager({ methods }: { methods: Method[] }) {
             </tr>
           </thead>
           <tbody>
-            {methods.map((method) => (
+            {rows.map((method) => (
               <tr key={method.id}>
                 <td>{method.name}</td>
                 <td>{method.active ? "Active" : "Disabled"}</td>

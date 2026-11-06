@@ -44,3 +44,10 @@ prisma/*.db-journal
 # typescript
 *.tsbuildinfo
 next-env.d.ts
+
+# windows installer output
+/release
+/dist-server
+
+.vercel
+.env*

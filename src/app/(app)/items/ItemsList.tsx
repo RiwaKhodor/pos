@@ -1,17 +1,21 @@
 "use client";
 
 import { useEffect, useMemo, useRef, useState } from "react";
+import Link from "next/link";
 import { useRouter } from "next/navigation";
 import { downloadExcelCsv } from "@/lib/exportCsv";
 
 export type ItemRow = {
   id: string;
+  createdById?: string | null;
   name: string;
   sku: string | null;
   barcode: string | null;
   unit: string;
   price: number;
   wholesalePrice: number;
+  onlinePrice?: number;
+  retailPrice?: number;
   cost: number;
   customsDuty: number;
   stock: number;
@@ -29,24 +33,38 @@ function formatAmount(n: number) {
   }).format(n);
 }
 
-export function ItemsList({ initialItems }: { initialItems: ItemRow[] }) {
+export function ItemsList({
+  initialItems,
+  canManage = true,
+  viewOnly = false,
+  viewerId = "",
+}: {
+  initialItems: ItemRow[];
+  canManage?: boolean;
+  viewOnly?: boolean;
+  viewerId?: string;
+}) {
   const router = useRouter();
   const lookRef = useRef<HTMLInputElement>(null);
   const [lookFor, setLookFor] = useState("");
-  const [query, setQuery] = useState("");
   const [selectedId, setSelectedId] = useState<string | null>(
     initialItems[0]?.id ?? null
   );
   const [hint, setHint] = useState(
-    "Scan a barcode in Look For, or click New to add an item."
+    viewOnly
+      ? "Search by name, code, or barcode."
+      : canManage
+        ? "Scan a barcode in Look For, or click New to add an item."
+        : "Select an item you added, then click Correct to fix the name, price, or barcode."
   );
 
   useEffect(() => {
+    if (viewOnly) return;
     lookRef.current?.focus();
-  }, []);
+  }, [viewOnly]);
 
   const items = useMemo(() => {
-    const q = query.trim().toLowerCase();
+    const q = lookFor.trim().toLowerCase();
     if (!q) return initialItems;
     return initialItems.filter((item) => {
       const hay = [
@@ -60,11 +78,17 @@ export function ItemsList({ initialItems }: { initialItems: ItemRow[] }) {
         .toLowerCase();
       return hay.includes(q);
     });
-  }, [initialItems, query]);
+  }, [initialItems, lookFor]);
+
+  useEffect(() => {
+    if (!selectedId) return;
+    document
+      .querySelector(`tr[data-id="${selectedId}"]`)
+      ?.scrollIntoView({ block: "nearest" });
+  }, [selectedId, items]);
 
   function handleScanOrSearch() {
     const term = lookFor.trim();
-    setQuery(term);
     if (!term) {
       setHint("Scan a barcode in Look For, or click New to add an item.");
       return;
@@ -78,13 +102,37 @@ export function ItemsList({ initialItems }: { initialItems: ItemRow[] }) {
 
     if (exact) {
       setSelectedId(exact.id);
-      setHint(`Found: ${exact.name}. Opening item…`);
-      router.push(`/items/${exact.id}`);
+      setLookFor(exact.barcode || exact.sku || exact.name);
+      setHint(`Selected: ${exact.name}. Click the item to open it.`);
+      requestAnimationFrame(() => lookRef.current?.select());
       return;
     }
 
-    setHint("No item with this barcode. Opening New Item with barcode filled.");
-    router.push(`/items/new?barcode=${encodeURIComponent(term)}`);
+    const q = term.toLowerCase();
+    const matches = initialItems.filter((item) =>
+      [item.name, item.sku || "", item.barcode || "", item.categoryName || "", item.containerCode || ""]
+        .join(" ")
+        .toLowerCase()
+        .includes(q)
+    );
+    if (matches.length > 0) {
+      setSelectedId(matches[0].id);
+      setHint(
+        matches.length === 1
+          ? `Showing ${matches[0].name}.`
+          : `Showing ${matches.length} items.`
+      );
+      return;
+    }
+
+    setHint(
+      viewOnly
+        ? "No matching item."
+        : "No item with this barcode. Opening New Item with barcode filled."
+    );
+    if (!viewOnly) {
+      router.push(`/items/new?barcode=${encodeURIComponent(term)}`);
+    }
   }
 
   async function removeSelected() {
@@ -97,7 +145,7 @@ export function ItemsList({ initialItems }: { initialItems: ItemRow[] }) {
       return;
     }
     const res = await fetch(`/api/products/${selectedId}`, { method: "DELETE" });
-    if (!res.ok) {
+    if (!res.ok && res.status < 500) {
       const data = await res.json();
       alert(data.error || "Could not remove item");
       return;
@@ -172,6 +220,44 @@ export function ItemsList({ initialItems }: { initialItems: ItemRow[] }) {
         {hint}
       </div>
 
+      {viewOnly ? (
+        <div className="item-cards">
+          {items.length === 0 ? (
+            <p>No items found.</p>
+          ) : (
+            items.map((item) => (
+              <article key={item.id} className="sale-card">
+                <div className="sale-card-top">
+                  <strong>{item.name}</strong>
+                  <span>${formatAmount(item.price)}</span>
+                </div>
+                <div className="sale-card-meta">
+                  Stock {item.stock.toFixed(1)} {item.unit}
+                  {item.stock <= item.lowStockAt ? " · Low stock" : ""}
+                  {item.categoryName ? ` · ${item.categoryName}` : ""}
+                  {item.containerCode ? ` · ${item.containerCode}` : ""}
+                </div>
+                <div className="sale-card-meta">
+                  {item.barcode || "No barcode"}
+                  {item.sku ? ` · ${item.sku}` : ""}
+                  {item.wholesalePrice > 0
+                    ? ` · Wholesale $${formatAmount(item.wholesalePrice)}`
+                    : ""}
+                  {(item.onlinePrice || 0) > 0
+                    ? ` · Online $${formatAmount(item.onlinePrice || 0)}`
+                    : ""}
+                  {(item.retailPrice || 0) > 0
+                    ? ` · Retail $${formatAmount(item.retailPrice || 0)}`
+                    : ""}
+                  {item.active ? "" : " · Inactive"}
+                </div>
+              </article>
+            ))
+          )}
+        </div>
+      ) : null}
+
+      {viewOnly ? null : (
       <div className="desk-grid-wrap">
         <table className="desk-grid">
           <thead>
@@ -181,14 +267,18 @@ export function ItemsList({ initialItems }: { initialItems: ItemRow[] }) {
               <th>Item Code</th>
               <th>Item Name</th>
               <th>Category</th>
-              <th>Container</th>
+              <th>Containers</th>
               <th>U.O.M</th>
               <th>On Hand Qty</th>
               <th>Normal Price</th>
               <th>Wholesale</th>
-              <th>Cost</th>
-              <th>Customs</th>
-              <th>Landed</th>
+              {canManage ? (
+                <>
+                  <th>Cost</th>
+                  <th>Customs</th>
+                  <th>Landed</th>
+                </>
+              ) : null}
               <th>POS</th>
               <th>Active</th>
             </tr>
@@ -196,15 +286,18 @@ export function ItemsList({ initialItems }: { initialItems: ItemRow[] }) {
           <tbody>
             {items.length === 0 ? (
               <tr>
-                <td colSpan={15}>No items found.</td>
+                <td colSpan={canManage ? 15 : 12}>No items found.</td>
               </tr>
             ) : (
               items.map((item, index) => (
                 <tr
                   key={item.id}
+                  data-id={item.id}
                   data-selected={selectedId === item.id}
-                  onClick={() => setSelectedId(item.id)}
-                  onDoubleClick={() => router.push(`/items/${item.id}`)}
+                  onClick={() => {
+                    setSelectedId(item.id);
+                    router.push(`/items/${item.id}`);
+                  }}
                 >
                   <td>{index + 1}</td>
                   <td>{item.barcode || "—"}</td>
@@ -218,13 +311,17 @@ export function ItemsList({ initialItems }: { initialItems: ItemRow[] }) {
                   <td className="report-amount">
                     {formatAmount(item.wholesalePrice)}
                   </td>
-                  <td className="report-amount">{formatAmount(item.cost)}</td>
-                  <td className="report-amount">
-                    {formatAmount(item.customsDuty)}
-                  </td>
-                  <td className="report-amount">
-                    {formatAmount(item.cost + item.customsDuty)}
-                  </td>
+                  {canManage ? (
+                    <>
+                      <td className="report-amount">{formatAmount(item.cost)}</td>
+                      <td className="report-amount">
+                        {formatAmount(item.customsDuty)}
+                      </td>
+                      <td className="report-amount">
+                        {formatAmount(item.cost + item.customsDuty)}
+                      </td>
+                    </>
+                  ) : null}
                   <td>{item.showInPos ? "Yes" : "No"}</td>
                   <td>{item.active ? "Yes" : "No"}</td>
                 </tr>
@@ -233,45 +330,55 @@ export function ItemsList({ initialItems }: { initialItems: ItemRow[] }) {
           </tbody>
         </table>
       </div>
+      )}
 
       <div className="desk-actions">
-        <button
-          type="button"
-          className="desk-btn"
-          onClick={() => router.push("/items/new")}
-        >
+        {viewOnly ? null : (
+          <>
+        <Link href="/items/new" className="desk-btn" prefetch={false}>
           New
-        </button>
-        <button
-          type="button"
-          className="desk-btn"
-          onClick={() => router.push("/items/containers")}
-        >
-          Containers
-        </button>
-        <button
-          type="button"
-          className="desk-btn"
-          onClick={() => router.push("/items/container-customs")}
-        >
-          Container Customs
-        </button>
-        <button
-          type="button"
-          className="desk-btn"
-          disabled={!selectedId}
-          onClick={() => selectedId && router.push(`/items/${selectedId}`)}
-        >
-          Edit
-        </button>
-        <button
-          type="button"
-          className="desk-btn"
-          disabled={!selectedId}
-          onClick={removeSelected}
-        >
-          Remove
-        </button>
+        </Link>
+        <Link href="/items/labels" className="desk-btn" prefetch={false}>
+          Barcode labels
+        </Link>
+        {canManage ? (
+          <>
+            <Link href="/items/containers" className="desk-btn" prefetch={false}>
+              Containers
+            </Link>
+            {selectedId ? (
+              <Link
+                href={`/items/${selectedId}`}
+                className="desk-btn"
+                prefetch={false}
+              >
+                Edit
+              </Link>
+            ) : (
+              <button type="button" className="desk-btn" disabled>
+                Edit
+              </button>
+            )}
+            <button
+              type="button"
+              className="desk-btn"
+              disabled={!selectedId}
+              onClick={removeSelected}
+            >
+              Remove
+            </button>
+          </>
+        ) : initialItems.some(
+            (item) => item.id === selectedId && item.createdById === viewerId
+          ) ? (
+          <Link href={`/items/${selectedId}`} className="desk-btn" prefetch={false}>
+            Correct
+          </Link>
+        ) : (
+          <button type="button" className="desk-btn" disabled>
+            Correct
+          </button>
+        )}
         <button
           type="button"
           className="desk-btn"
@@ -289,6 +396,8 @@ export function ItemsList({ initialItems }: { initialItems: ItemRow[] }) {
         <button type="button" className="desk-btn" onClick={exportExcel}>
           Excel
         </button>
+          </>
+        )}
       </div>
     </div>
   );

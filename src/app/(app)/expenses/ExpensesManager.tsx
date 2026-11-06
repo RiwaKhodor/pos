@@ -1,9 +1,9 @@
 "use client";
 
 import { FormEvent, useState } from "react";
-import { useRouter } from "next/navigation";
 import { Panel } from "@/components/ui";
 import { formatDate, formatMoney } from "@/lib/utils";
+import { isConnectionFailure } from "@/lib/connection-failure";
 
 type Expense = {
   id: string;
@@ -13,35 +13,58 @@ type Expense = {
 };
 
 export function ExpensesManager({ expenses }: { expenses: Expense[] }) {
-  const router = useRouter();
+  const [rows, setRows] = useState(expenses);
   const [form, setForm] = useState({ amount: "", note: "", date: "" });
   const [error, setError] = useState("");
 
   async function createExpense(e: FormEvent) {
     e.preventDefault();
     setError("");
+    const draft: Expense = {
+      id: `new-${Date.now()}`,
+      amount: Number(form.amount),
+      note: form.note,
+      date: form.date ? new Date(form.date).toISOString() : new Date().toISOString(),
+    };
+    setRows((current) => [draft, ...current]);
+    setForm({ amount: "", note: "", date: "" });
     const res = await fetch("/api/expenses", {
       method: "POST",
       headers: { "Content-Type": "application/json" },
       body: JSON.stringify({
-        amount: Number(form.amount),
-        note: form.note,
+        amount: draft.amount,
+        note: draft.note,
         date: form.date || undefined,
       }),
     });
     const data = await res.json();
     if (!res.ok) {
+      setRows((current) => current.filter((row) => row.id !== draft.id));
+      setForm({
+        amount: String(draft.amount),
+        note: draft.note,
+        date: form.date,
+      });
       setError(data.error || "Failed to add expense");
       return;
     }
-    setForm({ amount: "", note: "", date: "" });
-    router.refresh();
+    const saved = data.expense as Expense;
+    setRows((current) =>
+      current.map((row) => (row.id === draft.id ? saved : row))
+    );
   }
 
   async function removeExpense(id: string) {
     if (!confirm("Delete this expense?")) return;
-    await fetch(`/api/expenses/${id}`, { method: "DELETE" });
-    router.refresh();
+    const previous = rows;
+    setRows((current) => current.filter((row) => row.id !== id));
+    const res = await fetch(`/api/expenses/${id}`, { method: "DELETE" });
+    if (!res.ok) {
+      const data = await res.json().catch(() => ({}));
+      if (isConnectionFailure(res.status, data.error)) return;
+      setRows(previous);
+      setError(data.error || "Could not delete this expense");
+    }
   }
 
   return (
@@ -99,12 +122,12 @@ export function ExpensesManager({ expenses }: { expenses: Expense[] }) {
             </tr>
           </thead>
           <tbody>
-            {expenses.length === 0 ? (
+            {rows.length === 0 ? (
               <tr>
                 <td colSpan={4}>No expenses yet.</td>
               </tr>
             ) : (
-              expenses.map((expense) => (
+              rows.map((expense) => (
                 <tr key={expense.id}>
                   <td>{formatDate(expense.date)}</td>
                   <td>{expense.note}</td>

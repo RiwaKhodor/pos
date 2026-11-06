@@ -2,14 +2,24 @@
 
 import { FormEvent, useMemo, useState } from "react";
 import { useRouter } from "next/navigation";
+import { customsFromContainer } from "@/lib/container-duty";
+
+export type ProductLotPick = {
+  containerId: string | null;
+  containerCode: string | null;
+  quantity: number;
+  cost: number;
+  customsDuty: number;
+};
 
 export type ProductPick = {
   id: string;
   name: string;
   sku: string | null;
   stock: number;
-  containerId: string | null;
-  containerCode: string | null;
+  cost: number;
+  customsDuty: number;
+  lots: ProductLotPick[];
 };
 
 export type ContainerFormValues = {
@@ -18,8 +28,8 @@ export type ContainerFormValues = {
   name: string;
   note: string;
   arrivedAt: string;
+  cost: string;
   totalDuty: string;
-  productIds: string[];
 };
 
 export function ContainerForm({
@@ -38,16 +48,41 @@ export function ContainerForm({
     name: initial?.name || "",
     note: initial?.note || "",
     arrivedAt: initial?.arrivedAt || "",
+    cost: initial?.cost || "0",
     totalDuty: initial?.totalDuty || "0",
-    productIds: initial?.productIds || [],
+  });
+  const [lines, setLines] = useState<
+    Record<string, { quantity: string; cost: string; customsDuty: string }>
+  >(() => {
+    const drafts: Record<
+      string,
+      { quantity: string; cost: string; customsDuty: string }
+    > = {};
+    for (const product of products) {
+      const here = product.lots.filter(
+        (lot) => initial?.id && lot.containerId === initial.id
+      );
+      const qty = here.reduce((sum, lot) => sum + lot.quantity, 0);
+      const first = here[0];
+      drafts[product.id] = {
+        quantity: qty > 0 ? String(qty) : "",
+        cost: first ? String(first.cost) : String(product.cost || 0),
+        customsDuty: first
+          ? String(first.customsDuty)
+          : String(product.customsDuty || 0),
+      };
+    }
+    return drafts;
   });
   const [filter, setFilter] = useState("");
   const [error, setError] = useState("");
   const [saving, setSaving] = useState(false);
 
-  const selected = useMemo(
-    () => new Set(form.productIds),
-    [form.productIds]
+  const inThisContainer = useMemo(
+    () =>
+      products.filter((product) => Number(lines[product.id]?.quantity || 0) > 0)
+        .length,
+    [products, lines]
   );
 
   const visible = useMemo(() => {
@@ -61,15 +96,36 @@ export function ContainerForm({
     });
   }, [products, filter]);
 
-  function toggleProduct(id: string) {
-    setForm((prev) => {
-      const has = prev.productIds.includes(id);
-      return {
-        ...prev,
-        productIds: has
-          ? prev.productIds.filter((x) => x !== id)
-          : [...prev.productIds, id],
-      };
+  function dutyEach(cost: string, containerCost = form.cost, totalDuty = form.totalDuty) {
+    return String(
+      customsFromContainer(Number(cost) || 0, {
+        cost: Number(containerCost) || 0,
+        totalDuty: Number(totalDuty) || 0,
+      })
+    );
+  }
+
+  function setLine(
+    id: string,
+    patch: Partial<{ quantity: string; cost: string; customsDuty: string }>
+  ) {
+    setLines((prev) => {
+      const next = { ...prev[id], ...patch };
+      if (patch.cost !== undefined) next.customsDuty = dutyEach(next.cost);
+      return { ...prev, [id]: next };
+    });
+  }
+
+  function setContainerMoney(patch: { cost?: string; totalDuty?: string }) {
+    const cost = patch.cost ?? form.cost;
+    const totalDuty = patch.totalDuty ?? form.totalDuty;
+    setForm({ ...form, cost, totalDuty });
+    setLines((prev) => {
+      const next = { ...prev };
+      for (const id of Object.keys(next)) {
+        next[id] = { ...next[id], customsDuty: dutyEach(next[id].cost, cost, totalDuty) };
+      }
+      return next;
     });
   }
 
@@ -82,8 +138,8 @@ export function ContainerForm({
       name: form.name,
       note: form.note || null,
       arrivedAt: form.arrivedAt || null,
+      cost: Number(form.cost || 0),
       totalDuty: Number(form.totalDuty || 0),
-      productIds: form.productIds,
     };
 
     const res = await fetch(
@@ -100,7 +156,7 @@ export function ContainerForm({
       setError(data.error || "Save failed");
       return;
     }
-    router.push(`/items/containers/${data.container.id}`);
+    router.push("/items/containers");
     router.refresh();
   }
 
@@ -139,8 +195,9 @@ export function ContainerForm({
       </div>
 
       <div className="mb-2 border border-[#9bb4cc] bg-[#eef5ff] px-3 py-2 text-xs">
-        Tick items that arrived in this container. Leave unticked for items not
-        related to any container.
+        {mode === "create"
+          ? "Enter the container cost and customs. Items are added later on the New Item page — choose this container in the dropdown there."
+          : "Change the container code, cost, or customs. Items already in it keep their cost, and their customs percent updates from this bill."}
       </div>
 
       <div className="item-form-layout">
@@ -179,14 +236,35 @@ export function ContainerForm({
               />
             </div>
             <div className="desk-form-row">
-              <label htmlFor="c-duty">Total Duty</label>
+              <label htmlFor="c-cost">Container Cost</label>
+              <input
+                id="c-cost"
+                type="number"
+                step="0.01"
+                min="0"
+                value={form.cost}
+                onChange={(e) => setContainerMoney({ cost: e.target.value })}
+              />
+            </div>
+            <div className="desk-form-row">
+              <label htmlFor="c-duty">Total Customs</label>
               <input
                 id="c-duty"
                 type="number"
                 step="0.01"
+                min="0"
                 value={form.totalDuty}
-                onChange={(e) =>
-                  setForm({ ...form, totalDuty: e.target.value })
+                onChange={(e) => setContainerMoney({ totalDuty: e.target.value })}
+              />
+            </div>
+            <div className="desk-form-row">
+              <label>Customs %</label>
+              <input
+                readOnly
+                value={
+                  Number(form.cost) > 0
+                    ? `${((Number(form.totalDuty || 0) / Number(form.cost)) * 100).toFixed(2)}% of each item cost`
+                    : "Enter container cost"
                 }
               />
             </div>
@@ -202,9 +280,21 @@ export function ContainerForm({
           </fieldset>
         </div>
 
+        {mode === "create" || products.length === 0 ? (
+          <div className="desk-form-grid">
+            <fieldset className="desk-fieldset">
+              <legend>Items in this container</legend>
+              <div className="px-1 py-2 text-xs leading-5">
+                {mode === "create"
+                  ? "Nothing is in this container yet. Save it, then add each item from New Item and pick this container in the dropdown."
+                  : "Items stay on the container list. Change the fields above, then save."}
+              </div>
+            </fieldset>
+          </div>
+        ) : (
         <div className="desk-form-grid">
           <fieldset className="desk-fieldset">
-            <legend>Items in this container ({form.productIds.length})</legend>
+            <legend>Items in this container ({inThisContainer})</legend>
             <div className="desk-form-row">
               <label htmlFor="c-filter">Filter</label>
               <input
@@ -221,35 +311,78 @@ export function ContainerForm({
                 </div>
               ) : (
                 visible.map((p) => {
-                  const other =
-                    p.containerId &&
-                    p.containerId !== form.id &&
-                    p.containerCode
-                      ? ` (now in ${p.containerCode})`
-                      : "";
+                  const line = lines[p.id] || {
+                    quantity: "",
+                    cost: "0",
+                    customsDuty: "0",
+                  };
+                  const others = p.lots
+                    .filter(
+                      (lot) =>
+                        lot.quantity > 0 && lot.containerId !== form.id
+                    )
+                    .map(
+                      (lot) =>
+                        `${lot.containerCode || "No container"} (${lot.quantity})`
+                    )
+                    .join(", ");
                   return (
-                    <label
+                    <div
                       key={p.id}
-                      className="flex cursor-pointer items-center gap-2 border-b border-[#eee] px-3 py-1.5 text-xs hover:bg-[#f5f8fc]"
+                      className="border-b border-[#eee] px-3 py-2 text-xs"
                     >
-                      <input
-                        type="checkbox"
-                        checked={selected.has(p.id)}
-                        onChange={() => toggleProduct(p.id)}
-                      />
-                      <span className="flex-1">
+                      <div className="mb-1 font-semibold">
                         {p.name}
                         {p.sku ? ` · ${p.sku}` : ""}
-                        {other}
-                      </span>
-                      <span className="text-slate-500">qty {p.stock}</span>
-                    </label>
+                      </div>
+                      {others ? (
+                        <div className="mb-1 text-slate-500">
+                          Also in {others}
+                        </div>
+                      ) : null}
+                      <div className="grid grid-cols-3 gap-2">
+                        <label>
+                          Qty here
+                          <input
+                            type="number"
+                            min="0"
+                            value={line.quantity}
+                            onChange={(e) =>
+                              setLine(p.id, { quantity: e.target.value })
+                            }
+                          />
+                        </label>
+                        <label>
+                          Cost
+                          <input
+                            type="number"
+                            step="0.01"
+                            min="0"
+                            value={line.cost}
+                            onChange={(e) =>
+                              setLine(p.id, { cost: e.target.value })
+                            }
+                          />
+                        </label>
+                        <label>
+                          Customs
+                          <input
+                            type="number"
+                            step="0.01"
+                            min="0"
+                            readOnly
+                            value={line.customsDuty}
+                          />
+                        </label>
+                      </div>
+                    </div>
                   );
                 })
               )}
             </div>
           </fieldset>
         </div>
+        )}
       </div>
 
       {error ? (
@@ -274,17 +407,6 @@ export function ContainerForm({
               }
             >
               New Item in Container
-            </button>
-            <button
-              type="button"
-              className="desk-btn"
-              onClick={() =>
-                router.push(
-                  `/items/container-customs?containerId=${encodeURIComponent(form.id!)}`
-                )
-              }
-            >
-              Allocate Customs
             </button>
             <button
               type="button"

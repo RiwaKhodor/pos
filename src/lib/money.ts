@@ -1,23 +1,19 @@
 import { NextResponse } from "next/server";
 import { Prisma } from "@prisma/client";
 
-type DecimalLike =
-  | Prisma.Decimal
-  | number
-  | string
-  | null
-  | undefined
-  | { toNumber: () => number };
-
 /** Convert Prisma Decimal (or similar) to a plain JS number for math/UI. */
-export function toNum(value: DecimalLike): number {
+export function toNum(value: unknown): number {
   if (value == null) return 0;
   if (typeof value === "number") return Number.isFinite(value) ? value : 0;
   if (typeof value === "string") {
     const n = Number(value);
     return Number.isFinite(n) ? n : 0;
   }
-  if (typeof value === "object" && typeof value.toNumber === "function") {
+  if (
+    typeof value === "object" &&
+    "toNumber" in value &&
+    typeof value.toNumber === "function"
+  ) {
     const n = value.toNumber();
     return Number.isFinite(n) ? n : 0;
   }

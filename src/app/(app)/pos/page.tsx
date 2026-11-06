@@ -10,6 +10,29 @@ import {
 } from "react";
 import { useRouter } from "next/navigation";
 import { Role } from "@/lib/roles";
+import { StoreLogo } from "@/components/StoreLogo";
+import { UpdateNotice } from "@/components/UpdateNotice";
+import { wholesaleQtyError, clampWholesaleQty } from "@/lib/wholesale";
+import {
+  computeTenderChange,
+  DEFAULT_USD_TO_LBP,
+  formatLbp,
+  formatRate,
+  formatUsd,
+  toLbp,
+  type PayCurrency,
+} from "@/lib/fx";
+import {
+  discountForLines,
+  parseMaxDiscount,
+  pricingModeLabel,
+  suggestPriceMode,
+  tierPercent,
+  unitPriceFor,
+  VOLUME_TIERS,
+  type PricingMode,
+  type TierPercents,
+} from "@/lib/price-tiers";
 
 type Product = {
   id: string;
@@ -18,6 +41,11 @@ type Product = {
   barcode?: string | null;
   price: number;
   wholesalePrice?: number;
+  onlinePrice?: number;
+  retailPrice?: number;
+  maxDiscountPercent?: number | null;
+  wholesaleMinQty?: number;
+  wholesaleMaxQty?: number;
   stock: number;
 };
 
@@ -28,6 +56,11 @@ type CartLine = {
   name: string;
   price: number;
   wholesalePrice: number;
+  onlinePrice: number;
+  retailPrice: number;
+  maxDiscountPercent: number | null;
+  wholesaleMinQty: number;
+  wholesaleMaxQty: number;
   stock: number;
   quantity: number;
   unit: string;
@@ -38,12 +71,13 @@ type SessionInfo = {
   role: Role;
 };
 
-type PricingMode = "REGULAR" | "WHOLESALE" | "VOLUME";
-
-type VolumeDiscounts = {
-  at100: number;
-  at200: number;
-  at300: number;
+const EMPTY_TIERS: TierPercents = {
+  ABOVE_500: 0,
+  ABOVE_1000: 0,
+  ABOVE_3000: 0,
+  ABOVE_5000: 0,
+  ABOVE_7000: 0,
+  ABOVE_10000: 0,
 };
 
 function formatAmount(amount: number) {
@@ -51,13 +85,6 @@ function formatAmount(amount: number) {
     minimumFractionDigits: 2,
     maximumFractionDigits: 2,
   }).format(amount);
-}
-
-function volumePercent(subtotal: number, d: VolumeDiscounts) {
-  if (subtotal >= 300) return d.at300;
-  if (subtotal >= 200) return d.at200;
-  if (subtotal >= 100) return d.at100;
-  return 0;
 }
 
 function formatClock(date: Date) {
@@ -76,7 +103,9 @@ function formatClock(date: Date) {
 export default function PosPage() {
   const router = useRouter();
   const searchRef = useRef<HTMLInputElement>(null);
-  const [storeName, setStoreName] = useState("Store");
+  const [storeName, setStoreName] = useState("VANO");
+  const [usdToLbpRate, setUsdToLbpRate] = useState(DEFAULT_USD_TO_LBP);
+  const [taxRate, setTaxRate] = useState(0);
   const [session, setSession] = useState<SessionInfo | null>(null);
   const [now, setNow] = useState(() => new Date());
   const [query, setQuery] = useState("");
@@ -87,26 +116,29 @@ export default function PosPage() {
   const [selectedId, setSelectedId] = useState<string | null>(null);
   const [paymentMethodId, setPaymentMethodId] = useState("");
   const [pricingMode, setPricingMode] = useState<PricingMode>("REGULAR");
-  const [volumeDiscounts, setVolumeDiscounts] = useState<VolumeDiscounts>({
-    at100: 5,
-    at200: 10,
-    at300: 15,
-  });
+  const [tierPercents, setTierPercents] = useState<TierPercents>(EMPTY_TIERS);
+  const [pricingLocked, setPricingLocked] = useState(false);
+  const [discountInput, setDiscountInput] = useState("");
+  const [editingQtyId, setEditingQtyId] = useState<string | null>(null);
+  const [qtyDraft, setQtyDraft] = useState("");
   const [status, setStatus] = useState(
-    "Ready. Scan barcode or type product description. Premium POS is online."
+    "Ready. Scan barcode or type product description."
   );
+  const [linkState, setLinkState] = useState("Checking connection…");
   const [error, setError] = useState("");
   const [loading, setLoading] = useState(false);
   const [lastReceiptId, setLastReceiptId] = useState<string | null>(null);
   const [showProducts, setShowProducts] = useState(false);
   const [showPayment, setShowPayment] = useState(false);
+  const [payCurrency, setPayCurrency] = useState<PayCurrency>("USD");
+  const [changeCurrency, setChangeCurrency] = useState<PayCurrency>("USD");
+  const [tendered, setTendered] = useState("");
   const [stockAlert, setStockAlert] = useState<{
     name: string;
     wanted: number;
     available: number;
   } | null>(null);
   const [productFilter, setProductFilter] = useState("");
-  const [menuOpen, setMenuOpen] = useState<string | null>(null);
 
   function showStockPopup(name: string, wanted: number, available: number) {
     setStockAlert({ name, wanted, available });
@@ -133,7 +165,9 @@ export default function PosPage() {
         setSession({ name: me.user.name, role: me.user.role });
       }
       if (me.storeName) setStoreName(me.storeName);
-      if (me.volumeDiscounts) setVolumeDiscounts(me.volumeDiscounts);
+      if (me.usdToLbpRate) setUsdToLbpRate(Number(me.usdToLbpRate) || DEFAULT_USD_TO_LBP);
+      setTaxRate(Number(me.taxRate) || 0);
+      if (me.priceTiers) setTierPercents({ ...EMPTY_TIERS, ...me.priceTiers });
       setProducts(productsData.products || []);
       const list: PaymentMethod[] = methodsData.methods || [];
       setMethods(list);
@@ -151,6 +185,49 @@ export default function PosPage() {
   }, []);
 
   useEffect(() => {
+    let stop = false;
+    async function pull() {
+      try {
+        const res = await fetch("/api/sync/status");
+        const data = await res.json();
+        if (stop) return;
+        const waiting = Number(data.pending || 0);
+        const base =
+          data.mode === "offline"
+            ? `Offline. ${waiting} sale${waiting === 1 ? "" : "s"} saved on this PC.`
+            : data.mode === "syncing"
+              ? `Syncing. ${waiting} sale${waiting === 1 ? "" : "s"} waiting to upload.`
+              : waiting > 0
+                ? `Online. ${waiting} sale${waiting === 1 ? "" : "s"} still waiting.`
+                : "Online";
+        const stale = data.catalogStale
+          ? " Prices and stock are from the last connection."
+          : "";
+        const failed = Number(data.failed || 0);
+        const conflict = Number(data.conflict || 0);
+        setLinkState(
+          base +
+            stale +
+            (failed > 0
+              ? ` ${failed} sale${failed === 1 ? "" : "s"} need attention.`
+              : "") +
+            (conflict > 0
+              ? ` ${conflict} uploaded with a stock difference.`
+              : "")
+        );
+      } catch {
+        if (!stop) setLinkState("Offline. Sales stay on this computer.");
+      }
+    }
+    void pull();
+    const timer = setInterval(pull, 8000);
+    return () => {
+      stop = true;
+      clearInterval(timer);
+    };
+  }, []);
+
+  useEffect(() => {
     const timer = setTimeout(async () => {
       const res = await fetch(
         `/api/pos/products?q=${encodeURIComponent(productFilter || query)}`
@@ -161,35 +238,126 @@ export default function PosPage() {
     return () => clearTimeout(timer);
   }, [query, productFilter, showProducts]);
 
+  const regularSubtotal = useMemo(
+    () =>
+      Number(
+        cart.reduce((sum, line) => sum + line.price * line.quantity, 0).toFixed(2)
+      ),
+    [cart]
+  );
+  const suggestedMode = useMemo(
+    () => suggestPriceMode(regularSubtotal, tierPercents),
+    [regularSubtotal, tierPercents]
+  );
+
+  useEffect(() => {
+    if (pricingLocked && isOwner) return;
+    setPricingMode(suggestedMode);
+  }, [suggestedMode, pricingLocked, isOwner]);
+
+  useEffect(() => {
+    if (cart.length === 0) setPricingLocked(false);
+  }, [cart.length]);
+
   const pricing = useMemo(() => {
     const subtotal = cart.reduce((sum, line) => {
-      const unit =
-        pricingMode === "WHOLESALE" && line.wholesalePrice > 0
-          ? line.wholesalePrice
-          : line.price;
-      return sum + unit * line.quantity;
+      return sum + unitPriceFor(pricingMode, line) * line.quantity;
     }, 0);
     const rounded = Number(subtotal.toFixed(2));
     let discount = 0;
-    let percent = 0;
-    if (pricingMode === "VOLUME") {
-      percent = volumePercent(rounded, volumeDiscounts);
-      discount = Number(((rounded * percent) / 100).toFixed(2));
+    let discountPercent = 0;
+    let capped = false;
+    const tierPct = tierPercent(pricingMode, tierPercents);
+    if (tierPct > 0) {
+      const lines = cart.map((line) => ({
+        amount: unitPriceFor(pricingMode, line) * line.quantity,
+        maxDiscountPercent: line.maxDiscountPercent,
+      }));
+      const priced = discountForLines(lines, tierPct);
+      discountPercent = tierPct;
+      discount = priced.discount;
+      capped = priced.capped;
+    } else if (isOwner) {
+      const raw = Number(discountInput);
+      if (Number.isFinite(raw) && raw > 0) {
+        discountPercent = Math.min(raw, 100);
+        discount = Number(((rounded * discountPercent) / 100).toFixed(2));
+      }
     }
-    const total = Number((rounded - discount).toFixed(2));
-    return { subtotal: rounded, discount, percent, total };
-  }, [cart, pricingMode, volumeDiscounts]);
+    const taxable = Number((rounded - discount).toFixed(2));
+    const rate = Number.isFinite(taxRate) && taxRate > 0 ? taxRate : 0;
+    const tax = Number(((taxable * rate) / 100).toFixed(2));
+    const total = Number((taxable + tax).toFixed(2));
+    return { subtotal: rounded, discount, discountPercent, capped, tax, taxRate: rate, total };
+  }, [cart, pricingMode, discountInput, isOwner, taxRate, tierPercents]);
 
   const total = pricing.total;
+  const holdPrice = useRef(false);
+
+  useEffect(() => {
+    if (holdPrice.current) {
+      if (cart.length === 0) holdPrice.current = false;
+      return;
+    }
+    const amount = cart.length === 0 ? 0 : total;
+    const timer = setTimeout(() => {
+      void fetch("/api/pos/display", {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ amount }),
+      });
+    }, 200);
+    return () => clearTimeout(timer);
+  }, [total, cart.length]);
+  const totalLbp = toLbp(total, usdToLbpRate);
+  const tenderPreview = computeTenderChange({
+    totalUsd: total,
+    rate: usdToLbpRate,
+    payCurrency,
+    tendered: Number(tendered) || 0,
+  });
 
   const addProduct = useCallback((product: Product, qty = 1) => {
-    const amount = Math.max(1, Math.floor(qty));
+    const wsPrice = product.wholesalePrice || 0;
+    const wsMin = product.wholesaleMinQty || 0;
+    const wsMax = product.wholesaleMaxQty || 0;
+    let amount = Math.max(1, Math.floor(qty));
+    if (pricingMode === "WHOLESALE" && wsPrice > 0 && wsMin > 0) {
+      amount = Math.max(amount, wsMin);
+    }
+    const wsErr =
+      pricingMode === "WHOLESALE"
+        ? wholesaleQtyError(amount, {
+            wholesalePrice: wsPrice,
+            wholesaleMinQty: wsMin,
+            wholesaleMaxQty: wsMax,
+          })
+        : null;
+    if (wsErr) {
+      setError(wsErr);
+      setStatus(wsErr);
+      return;
+    }
     setError("");
     let blocked = false;
     setCart((prev) => {
       const existing = prev.find((line) => line.productId === product.id);
       if (existing) {
         const wantedTotal = existing.quantity + amount;
+        const addErr =
+          pricingMode === "WHOLESALE"
+            ? wholesaleQtyError(wantedTotal, {
+                wholesalePrice: wsPrice,
+                wholesaleMinQty: wsMin,
+                wholesaleMaxQty: wsMax,
+              })
+            : null;
+        if (addErr) {
+          blocked = true;
+          setError(addErr);
+          setStatus(addErr);
+          return prev;
+        }
         if (wantedTotal > product.stock) {
           blocked = true;
           showStockPopup(product.name, wantedTotal, product.stock);
@@ -216,15 +384,29 @@ export default function PosPage() {
       if (amount > product.stock) {
         blocked = true;
         showStockPopup(product.name, amount, product.stock);
+        const qtyOnHand =
+          pricingMode === "WHOLESALE" && wsPrice > 0
+            ? clampWholesaleQty(product.stock, {
+                wholesaleMinQty: wsMin,
+                wholesaleMaxQty: wsMax,
+                stock: product.stock,
+              })
+            : product.stock;
+        if (qtyOnHand < 1) return prev;
         return [
           ...prev,
           {
             productId: product.id,
             name: product.name,
             price: product.price,
-            wholesalePrice: product.wholesalePrice || 0,
+            wholesalePrice: wsPrice,
+            onlinePrice: product.onlinePrice || 0,
+            retailPrice: product.retailPrice || 0,
+            maxDiscountPercent: parseMaxDiscount(product.maxDiscountPercent),
+            wholesaleMinQty: wsMin,
+            wholesaleMaxQty: wsMax,
             stock: product.stock,
-            quantity: product.stock,
+            quantity: qtyOnHand,
             unit: "pc",
           },
         ];
@@ -235,7 +417,12 @@ export default function PosPage() {
           productId: product.id,
           name: product.name,
           price: product.price,
-          wholesalePrice: product.wholesalePrice || 0,
+          wholesalePrice: wsPrice,
+          onlinePrice: product.onlinePrice || 0,
+          retailPrice: product.retailPrice || 0,
+          maxDiscountPercent: parseMaxDiscount(product.maxDiscountPercent),
+          wholesaleMinQty: wsMin,
+          wholesaleMaxQty: wsMax,
           stock: product.stock,
           quantity: amount,
           unit: "pc",
@@ -250,7 +437,7 @@ export default function PosPage() {
     setQtyInput("1");
     setShowProducts(false);
     searchRef.current?.focus();
-  }, []);
+  }, [pricingMode]);
 
   async function resolveAndAdd() {
     const term = query.trim();
@@ -299,23 +486,19 @@ export default function PosPage() {
   function newSale() {
     setCart([]);
     setSelectedId(null);
+    setDiscountInput("");
     setError("");
     setStatus("New sale started. Scan barcode or type product description.");
     searchRef.current?.focus();
   }
 
-  async function changeQty() {
-    if (!selectedId) {
-      setStatus("Select a line item first.");
-      return;
-    }
-    const line = cart.find((l) => l.productId === selectedId);
-    if (!line) return;
+  function beginQtyEdit(line: CartLine) {
+    setSelectedId(line.productId);
+    setEditingQtyId(line.productId);
+    setQtyDraft(String(line.quantity));
+  }
 
-    const raw = window.prompt("Enter quantity", String(line.quantity));
-    if (raw == null) return;
-
-    const wanted = Math.floor(Number(raw));
+  async function applyLineQty(line: CartLine, wanted: number) {
     if (!Number.isFinite(wanted) || wanted < 1) {
       setStatus("Quantity must be at least 1.");
       setError("Invalid quantity");
@@ -346,7 +529,7 @@ export default function PosPage() {
       if (available >= 1 && available !== line.quantity) {
         setCart((prev) =>
           prev.map((l) =>
-            l.productId === selectedId
+            l.productId === line.productId
               ? { ...l, quantity: available, stock: available }
               : l
           )
@@ -355,16 +538,40 @@ export default function PosPage() {
       return;
     }
 
+    if (pricingMode === "WHOLESALE") {
+      const wsErr = wholesaleQtyError(wanted, {
+        wholesalePrice: line.wholesalePrice,
+        wholesaleMinQty: line.wholesaleMinQty,
+        wholesaleMaxQty: line.wholesaleMaxQty,
+      });
+      if (wsErr) {
+        setError(wsErr);
+        setStatus(wsErr);
+        return;
+      }
+    }
+
     setError("");
     setStockAlert(null);
     setCart((prev) =>
       prev.map((l) =>
-        l.productId === selectedId
+        l.productId === line.productId
           ? { ...l, quantity: wanted, stock: available }
           : l
       )
     );
+    setEditingQtyId(null);
     setStatus(`Quantity updated to ${wanted}.`);
+  }
+
+  function changeQty() {
+    if (!selectedId) {
+      setStatus("Select a line item first.");
+      return;
+    }
+    const line = cart.find((l) => l.productId === selectedId);
+    if (!line) return;
+    beginQtyEdit(line);
   }
 
   function voidItem() {
@@ -395,16 +602,41 @@ export default function PosPage() {
       return;
     }
     setError("");
+    if (pricingMode === "WHOLESALE") {
+      for (const line of cart) {
+        const wsErr = wholesaleQtyError(line.quantity, {
+          wholesalePrice: line.wholesalePrice,
+          wholesaleMinQty: line.wholesaleMinQty,
+          wholesaleMaxQty: line.wholesaleMaxQty,
+        });
+        if (wsErr) {
+          setError(`${line.name}: ${wsErr}`);
+          setStatus(`${line.name}: ${wsErr}`);
+          return;
+        }
+      }
+    }
+    setPayCurrency("USD");
+    setChangeCurrency("USD");
+    setTendered(total.toFixed(2));
     setShowPayment(true);
-    setStatus("Select payment method and complete the sale.");
+    setStatus("Select payment currency and complete the sale.");
+  }
+
+  function choosePricing(mode: PricingMode) {
+    setPricingMode(mode);
+    if (isOwner) setPricingLocked(true);
   }
 
   function exitPos() {
     if (isOwner) {
       router.push("/owner");
-    } else {
-      router.push("/my-sales");
+      return;
     }
+    void fetch("/api/auth/logout", { method: "POST" }).finally(() => {
+      router.push("/login");
+      router.refresh();
+    });
   }
 
   async function checkout(e?: FormEvent) {
@@ -426,6 +658,10 @@ export default function PosPage() {
         })),
         paymentMethodId,
         pricingMode,
+        payCurrency,
+        changeCurrency,
+        amountTendered: Number(tendered),
+        discount: isOwner ? pricing.discount : 0,
       }),
     });
 
@@ -439,12 +675,29 @@ export default function PosPage() {
     }
 
     setLastReceiptId(data.sale.id);
+    setProducts((prev) =>
+      prev.map((product) => {
+        const sold = cart.find((line) => line.productId === product.id);
+        if (!sold) return product;
+        return {
+          ...product,
+          stock: Math.max(0, product.stock - sold.quantity),
+        };
+      })
+    );
+    holdPrice.current = true;
+    void fetch("/api/pos/display", {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({ amount: data.sale.total }),
+    });
     setShowPayment(false);
     setCart([]);
     setSelectedId(null);
+    setDiscountInput("");
+    setTendered("");
     setStatus(`Sale complete. Receipt ${data.sale.receiptNumber || ""}.`);
     router.push(`/receipts/${data.sale.id}?print=1`);
-    router.refresh();
   }
 
   useEffect(() => {
@@ -457,7 +710,6 @@ export default function PosPage() {
         setShowPayment(false);
         setShowProducts(false);
         setStockAlert(null);
-        setMenuOpen(null);
       } else if (e.key === "Delete" && !typing) {
         e.preventDefault();
         voidItem();
@@ -468,115 +720,16 @@ export default function PosPage() {
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [cart, selectedId]);
 
-  const menuItems: Record<
-    string,
-    { label: string; action: () => void; disabled?: boolean }[]
-  > = {
-    File: [
-      { label: "New Sale", action: newSale },
-      { label: "Exit POS", action: exitPos },
-    ],
-    "Cashier Entry": [
-      { label: "Focus barcode", action: () => searchRef.current?.focus() },
-      { label: "Product List", action: () => setShowProducts(true) },
-    ],
-    Transaction: [
-      { label: "Payment", action: openPayment },
-      { label: "Void Item", action: voidItem },
-      {
-        label: "My Sales",
-        action: () => router.push("/my-sales"),
-      },
-      {
-        label: "All Sales",
-        action: () => router.push("/sales"),
-        disabled: !isOwner,
-      },
-    ],
-    Report: [
-      {
-        label: "Reports",
-        action: () => router.push("/reports"),
-        disabled: !isOwner,
-      },
-      {
-        label: "Owner Dashboard",
-        action: () => router.push("/owner"),
-        disabled: !isOwner,
-      },
-    ],
-    Setup: [
-      {
-        label: "Settings",
-        action: () => router.push("/settings"),
-        disabled: !isOwner,
-      },
-      {
-        label: "Payment Methods",
-        action: () => router.push("/payment-methods"),
-        disabled: !isOwner,
-      },
-      {
-        label: "Employees",
-        action: () => router.push("/employees"),
-        disabled: !isOwner,
-      },
-    ],
-    "Items": [
-      {
-        label: "Products",
-        action: () => router.push("/items"),
-        disabled: !isOwner,
-      },
-      {
-        label: "Categories",
-        action: () => router.push("/categories"),
-        disabled: !isOwner,
-      },
-      {
-        label: "Inventory",
-        action: () => router.push("/inventory"),
-        disabled: !isOwner,
-      },
-    ],
-  };
-
   return (
-    <div className="pos-shell" onClick={() => setMenuOpen(null)}>
+    <div className="pos-shell">
       <div className="pos-title">
+        <StoreLogo size={26} />
         {storeName.toUpperCase()} - POS System
-      </div>
-
-      <div className="pos-menu" onClick={(e) => e.stopPropagation()}>
-        {Object.keys(menuItems).map((name) => (
-          <div key={name} className="relative">
-            <button
-              type="button"
-              data-active={menuOpen === name}
-              onClick={() => setMenuOpen((m) => (m === name ? null : name))}
-            >
-              {name}
-            </button>
-            {menuOpen === name ? (
-              <div className="absolute left-0 top-full z-40 min-w-[180px] border border-[#888] bg-[#f7f7f7] py-1 shadow-lg">
-                {menuItems[name].map((item) => (
-                  <button
-                    key={item.label}
-                    type="button"
-                    disabled={item.disabled}
-                    className="block w-full px-3 py-1.5 text-left text-xs hover:bg-[#dce8f8] disabled:cursor-not-allowed disabled:opacity-40"
-                    onClick={() => {
-                      setMenuOpen(null);
-                      item.action();
-                    }}
-                  >
-                    {item.label}
-                  </button>
-                ))}
-              </div>
-            ) : null}
-          </div>
-        ))}
+        <span className="pos-link">{linkState}</span>
+        <UpdateNotice />
+        <button type="button" className="pos-btn pos-exit" onClick={exitPos}>
+          Exit POS
+        </button>
       </div>
 
       <div className="pos-toolbar">
@@ -629,12 +782,19 @@ export default function PosPage() {
           <select
             className="pos-box"
             value={pricingMode}
-            onChange={(e) => setPricingMode(e.target.value as PricingMode)}
+            disabled={!isOwner}
+            onChange={(e) => choosePricing(e.target.value as PricingMode)}
             style={{ fontWeight: 600 }}
           >
             <option value="REGULAR">Regular</option>
             <option value="WHOLESALE">Wholesale</option>
-            <option value="VOLUME">Volume % (100/200/300)</option>
+            <option value="ONLINE">Online</option>
+            <option value="RETAIL">Retail</option>
+            {VOLUME_TIERS.map((tier) => (
+              <option key={tier.mode} value={tier.mode}>
+                {pricingModeLabel(tier.mode, tierPercents)}
+              </option>
+            ))}
           </select>
         </div>
         <div className="pos-field">
@@ -663,17 +823,59 @@ export default function PosPage() {
               </tr>
             ) : (
               cart.map((line) => {
-                const unit =
-                  pricingMode === "WHOLESALE" && line.wholesalePrice > 0
-                    ? line.wholesalePrice
-                    : line.price;
+                const unit = unitPriceFor(pricingMode, line);
                 return (
                 <tr
                   key={line.productId}
                   data-selected={selectedId === line.productId}
                   onClick={() => setSelectedId(line.productId)}
                 >
-                  <td>{line.quantity.toFixed(2)}</td>
+                  <td onClick={(e) => e.stopPropagation()}>
+                    <div className="pos-qty">
+                      <button
+                        type="button"
+                        className="pos-qty-btn"
+                        onClick={() => applyLineQty(line, line.quantity - 1)}
+                      >
+                        −
+                      </button>
+                      {editingQtyId === line.productId ? (
+                        <input
+                          className="pos-qty-input"
+                          autoFocus
+                          type="number"
+                          min={1}
+                          value={qtyDraft}
+                          onChange={(e) => setQtyDraft(e.target.value)}
+                          onBlur={() =>
+                            applyLineQty(line, Math.floor(Number(qtyDraft)))
+                          }
+                          onKeyDown={(e) => {
+                            if (e.key === "Enter") {
+                              e.preventDefault();
+                              (e.currentTarget as HTMLInputElement).blur();
+                            }
+                            if (e.key === "Escape") setEditingQtyId(null);
+                          }}
+                        />
+                      ) : (
+                        <button
+                          type="button"
+                          className="pos-qty-value"
+                          onClick={() => beginQtyEdit(line)}
+                        >
+                          {line.quantity.toFixed(2)}
+                        </button>
+                      )}
+                      <button
+                        type="button"
+                        className="pos-qty-btn"
+                        onClick={() => applyLineQty(line, line.quantity + 1)}
+                      >
+                        +
+                      </button>
+                    </div>
+                  </td>
                   <td>{line.unit}</td>
                   <td>{line.name}</td>
                   <td>{formatAmount(unit)}</td>
@@ -726,11 +928,19 @@ export default function PosPage() {
         </div>
         <div className="pos-total">
           <span className="pos-total-label">
-            {pricing.discount > 0
-              ? `TOTAL (-${pricing.percent}%)`
-              : "TOTAL"}
+            {pricing.tax > 0
+              ? `TOTAL (incl. ${pricing.taxRate}% tax)`
+              : pricing.discount > 0
+                ? "TOTAL (discount)"
+                : "TOTAL"}
           </span>
-          <span className="pos-total-value">{formatAmount(total)}</span>
+          <div className="text-right">
+            <div className="pos-total-value">{formatUsd(total)}</div>
+            <div className="mt-1 text-sm font-semibold tracking-wide opacity-85">
+              {formatLbp(totalLbp)}
+            </div>
+          </div>
+          <div className="pos-rate">1 $ = {formatRate(usdToLbpRate)} L.L</div>
         </div>
       </div>
 
@@ -813,48 +1023,89 @@ export default function PosPage() {
               <div className="border border-[#888] bg-black px-3 py-2 text-[#2ee6a8]">
                 <div className="flex justify-between text-sm">
                   <span>Subtotal</span>
-                  <span>{formatAmount(pricing.subtotal)}</span>
+                  <span>{formatUsd(pricing.subtotal)}</span>
                 </div>
                 {pricing.discount > 0 ? (
                   <div className="flex justify-between text-sm">
-                    <span>Discount ({pricing.percent}%)</span>
-                    <span>-{formatAmount(pricing.discount)}</span>
+                    <span>
+                      {pricing.capped
+                        ? "Discount"
+                        : `Discount ${pricing.discountPercent}%`}
+                    </span>
+                    <span>-{formatUsd(pricing.discount)}</span>
+                  </div>
+                ) : null}
+                {pricing.tax > 0 ? (
+                  <div className="flex justify-between text-sm">
+                    <span>Tax {pricing.taxRate}%</span>
+                    <span>{formatUsd(pricing.tax)}</span>
                   </div>
                 ) : null}
                 <div className="mt-1 flex items-center justify-between">
-                  <span className="text-sm font-bold">TOTAL</span>
+                  <span className="text-sm font-bold">TOTAL $</span>
                   <span className="font-mono text-2xl font-bold">
-                    {formatAmount(total)}
+                    {formatUsd(total)}
                   </span>
                 </div>
+                <div className="flex items-center justify-between">
+                  <span className="text-sm font-bold">TOTAL L.L</span>
+                  <span className="font-mono text-xl font-bold">
+                    {formatLbp(totalLbp)}
+                  </span>
+                </div>
+                <div className="mt-1 text-[11px] opacity-80">
+                  Rate: 1 $ = {formatRate(usdToLbpRate)} L.L
+                </div>
               </div>
+              {isOwner ? (
+                <div className="pos-field">
+                  <label htmlFor="owner-discount">Discount %</label>
+                  <input
+                    id="owner-discount"
+                    type="number"
+                    min="0"
+                    max="100"
+                    step="0.01"
+                    value={discountInput}
+                    disabled={tierPercent(pricingMode, tierPercents) > 0}
+                    onChange={(e) => setDiscountInput(e.target.value)}
+                    placeholder="0"
+                  />
+                  {pricing.discount > 0 && tierPercent(pricingMode, tierPercents) === 0 ? (
+                    <div className="mt-1 text-[11px] text-slate-600">
+                      {pricing.discountPercent}% off = -{formatUsd(pricing.discount)}
+                    </div>
+                  ) : null}
+                </div>
+              ) : null}
               <div className="pos-field">
                 <label htmlFor="pricing-mode">Pricing</label>
                 <select
                   id="pricing-mode"
                   value={pricingMode}
-                  onChange={(e) =>
-                    setPricingMode(e.target.value as PricingMode)
-                  }
+                  disabled={!isOwner}
+                  onChange={(e) => choosePricing(e.target.value as PricingMode)}
                 >
                   <option value="REGULAR">Regular (normal price)</option>
-                  <option value="WHOLESALE">
-                    Wholesale (each item wholesale price)
-                  </option>
-                  <option value="VOLUME">
-                    Volume % (by total 100 / 200 / 300)
-                  </option>
+                  <option value="WHOLESALE">Wholesale</option>
+                  <option value="ONLINE">Online</option>
+                  <option value="RETAIL">Retail</option>
+                  {VOLUME_TIERS.map((tier) => (
+                    <option key={tier.mode} value={tier.mode}>
+                      {pricingModeLabel(tier.mode, tierPercents)}
+                    </option>
+                  ))}
                 </select>
+                {pricing.discount > 0 ? (
+                  <div className="mt-1 text-[11px] text-slate-600">
+                    {pricingModeLabel(pricingMode, tierPercents)}
+                    {pricing.capped ? " (some items are capped)" : ""}:{" "}
+                    {pricing.capped
+                      ? `-${formatUsd(pricing.discount)}`
+                      : `${pricing.discountPercent}% off = -${formatUsd(pricing.discount)}`}
+                  </div>
+                ) : null}
               </div>
-              {pricingMode === "VOLUME" ? (
-                <div className="border border-[#aaa] bg-white px-3 py-2 text-xs">
-                  ≥100 → {volumeDiscounts.at100}% · ≥200 →{" "}
-                  {volumeDiscounts.at200}% · ≥300 → {volumeDiscounts.at300}%
-                  {pricing.percent > 0
-                    ? ` · Applied now: ${pricing.percent}%`
-                    : " · No discount yet (total under 100)"}
-                </div>
-              ) : null}
               <div className="pos-field">
                 <label htmlFor="pay-method">Payment method</label>
                 <select
@@ -870,6 +1121,70 @@ export default function PosPage() {
                   ))}
                 </select>
               </div>
+              <div className="pos-field">
+                <label htmlFor="pay-currency">Customer pays in</label>
+                <select
+                  id="pay-currency"
+                  value={payCurrency}
+                  onChange={(e) => {
+                    const next = e.target.value as PayCurrency;
+                    setPayCurrency(next);
+                    setTendered(
+                      next === "USD"
+                        ? total.toFixed(2)
+                        : String(Math.round(totalLbp))
+                    );
+                  }}
+                >
+                  <option value="USD">Dollars ($)</option>
+                  <option value="LBP">Lebanese Lira (L.L)</option>
+                </select>
+              </div>
+              <div className="pos-field">
+                <label htmlFor="tendered">
+                  Amount received ({payCurrency === "LBP" ? "L.L" : "$"})
+                  {payCurrency === "LBP" && tendered
+                    ? ` — ${formatLbp(Number(tendered) || 0)}`
+                    : ""}
+                </label>
+                <input
+                  id="tendered"
+                  type="number"
+                  step={payCurrency === "LBP" ? "1" : "0.01"}
+                  min="0"
+                  required
+                  value={tendered}
+                  onChange={(e) => setTendered(e.target.value)}
+                />
+              </div>
+              <div className="border border-[#aaa] bg-white px-3 py-2 text-sm">
+                <div className="mb-1 font-bold">Change</div>
+                <div className="flex justify-between">
+                  <span>Dollars</span>
+                  <span className="font-mono font-semibold">
+                    {formatUsd(tenderPreview.changeUsd)}
+                  </span>
+                </div>
+                <div className="flex justify-between">
+                  <span>L.L</span>
+                  <span className="font-mono font-semibold">
+                    {formatLbp(tenderPreview.changeLbp)}
+                  </span>
+                </div>
+              </div>
+              <div className="pos-field">
+                <label htmlFor="change-currency">Give change in</label>
+                <select
+                  id="change-currency"
+                  value={changeCurrency}
+                  onChange={(e) =>
+                    setChangeCurrency(e.target.value as PayCurrency)
+                  }
+                >
+                  <option value="USD">Dollars ($)</option>
+                  <option value="LBP">Lebanese Lira (L.L)</option>
+                </select>
+              </div>
               {error ? (
                 <div className="border border-red-300 bg-red-50 px-3 py-2 text-sm text-red-700">
                   {error}
@@ -883,7 +1198,16 @@ export default function PosPage() {
                 >
                   Cancel
                 </button>
-                <button type="submit" className="pos-btn" disabled={loading}>
+                <button
+                  type="submit"
+                  className="pos-btn"
+                  disabled={
+                    loading ||
+                    (payCurrency === "USD"
+                      ? (Number(tendered) || 0) + 0.001 < tenderPreview.dueUsd
+                      : (Number(tendered) || 0) + 0.001 < tenderPreview.dueLbp)
+                  }
+                >
                   {loading ? "Processing..." : "Complete Sale"}
                 </button>
               </div>

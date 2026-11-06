@@ -33,13 +33,14 @@ async function main() {
 
   await prisma.storeSettings.upsert({
     where: { id: "default" },
-    update: {},
+    update: { storeName: "VANO", usdToLbpRate: 89500 },
     create: {
       id: "default",
-      storeName: "Simple POS Store",
+      storeName: "VANO",
       currency: "USD",
+      usdToLbpRate: 89500,
       taxRate: 0,
-      address: "123 Main Street",
+      address: "Akbiyeh - Main Road",
       phone: "555-0100",
       receiptFooter: "Thank you for your purchase!",
     },
@@ -121,8 +122,6 @@ async function main() {
   });
 
   console.log("Seed complete.");
-  console.log("Owner: owner@store.com / owner123");
-  console.log("Employee: cashier@store.com / employee123");
 }
 
 main()

@@ -1,7 +1,11 @@
 {
   "name": "pos",
-  "version": "0.1.0",
+  "version": "0.1.17",
   "private": true,
+  "engines": {
+    "node": "22.x"
+  },
+  "main": "electron/main.cjs",
   "scripts": {
     "dev": "next dev",
     "build": "prisma generate && next build",
@@ -10,18 +14,76 @@
     "db:migrate": "prisma migrate dev",
     "db:deploy": "prisma migrate deploy",
     "db:seed": "tsx prisma/seed.ts",
-    "db:reset": "prisma migrate reset --force"
+    "db:reset": "prisma migrate reset --force",
+    "desktop:dev": "electron electron/main.cjs"
   },
   "prisma": {
     "seed": "tsx prisma/seed.ts"
   },
+  "build": {
+    "appId": "com.vano.pos",
+    "productName": "VANO POS",
+    "directories": {
+      "output": "release"
+    },
+    "electronDist": "build/electron-dist",
+    "files": [
+      "electron/**/*"
+    ],
+    "extraResources": [
+      {
+        "from": "dist-server",
+        "to": "standalone"
+      },
+      {
+        "from": "dist-server/node_modules",
+        "to": "standalone/node_modules"
+      },
+      {
+        "from": "build/server.env",
+        "to": "server.env"
+      },
+      {
+        "from": "build/node",
+        "to": "node"
+      },
+      {
+        "from": "build/github-update.token",
+        "to": "github-update.token"
+      }
+    ],
+    "win": {
+      "icon": "electron/icon.ico",
+      "artifactName": "VANO-POS-Setup-${version}.${ext}",
+      "target": [
+        "nsis"
+      ]
+    },
+    "nsis": {
+      "oneClick": false,
+      "perMachine": false,
+      "allowToChangeInstallationDirectory": true,
+      "createDesktopShortcut": true,
+      "shortcutName": "VANO POS"
+    },
+    "publish": [
+      {
+        "provider": "github",
+        "owner": "RiwaKhodor",
+        "repo": "pos",
+        "private": true
+      }
+    ]
+  },
   "dependencies": {
     "@prisma/client": "^5.22.0",
     "bcryptjs": "^3.0.3",
+    "electron-updater": "^6.8.9",
     "jose": "^6.2.12",
     "next": "16.3.5",
     "react": "19.2.8",
     "react-dom": "19.2.8",
+    "web-push": "^3.6.7",
     "zod": "^4.6.5"
   },
   "devDependencies": {
@@ -30,6 +92,8 @@
     "@types/node": "^20",
     "@types/react": "^19",
     "@types/react-dom": "^19",
+    "electron": "^44.7.1",
+    "electron-builder": "^26.15.3",
     "eslint": "^9",
     "eslint-config-next": "16.3.5",
     "prisma": "^5.22.0",

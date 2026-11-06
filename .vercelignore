@@ -1,0 +1,16 @@
+node_modules
+.next
+release
+dist-server
+build
+.git
+.vercel
+.env
+.env.*
+!.env.example
+*.sqlite
+*.db
+coverage
+out
+*.tsbuildinfo
+agent-transcripts

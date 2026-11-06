@@ -1,13 +1,18 @@
 "use client";
 
 import { useRouter } from "next/navigation";
+import { isConnectionFailure } from "@/lib/connection-failure";
 
 export function DeleteSaleButton({
   id,
   receiptNumber,
+  onDeleted,
+  onFailed,
 }: {
   id: string;
   receiptNumber: string;
+  onDeleted?: () => void;
+  onFailed?: () => void;
 }) {
   const router = useRouter();
 
@@ -17,13 +22,15 @@ export function DeleteSaleButton({
     );
     if (!ok) return;
 
-    const res = await fetch(`/api/sales?id=${id}`, { method: "DELETE" });
-    if (res.ok) {
+    onDeleted?.();
+    const res = await fetch(`/api/sales?id=${encodeURIComponent(id)}`, {
+      method: "DELETE",
+    });
+    if (res.ok || isConnectionFailure(res.status)) {
       router.refresh();
       return;
     }
-    const data = await res.json();
-    alert(data.error || "Failed to delete. Only the owner can delete sales.");
+    onFailed?.();
   }
 
   return (

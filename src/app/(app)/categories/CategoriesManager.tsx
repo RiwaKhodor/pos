@@ -16,6 +16,7 @@ export function CategoriesManager({
   initialCategories: Category[];
 }) {
   const router = useRouter();
+  const [rows, setRows] = useState(initialCategories);
   const [name, setName] = useState("");
   const [error, setError] = useState("");
 
@@ -32,16 +33,26 @@ export function CategoriesManager({
       setError(data.error || "Failed to create category");
       return;
     }
+    const category = data.category as Category;
+    setRows((current) => [
+      ...current.filter((row) => row.id !== category.id),
+      { ...category, _count: category._count || { products: 0 } },
+    ]);
     setName("");
     router.refresh();
   }
 
   async function removeCategory(id: string) {
     if (!confirm("Delete this category?")) return;
+    const previous = rows;
+    setRows((current) => current.filter((row) => row.id !== id));
     const res = await fetch(`/api/categories/${id}`, { method: "DELETE" });
     if (!res.ok) {
-      const data = await res.json();
-      alert(data.error || "Could not delete");
+      if (res.status < 500) {
+        setRows(previous);
+        const data = await res.json();
+        alert(data.error || "Could not delete");
+      }
       return;
     }
     router.refresh();
@@ -74,7 +85,7 @@ export function CategoriesManager({
             </tr>
           </thead>
           <tbody>
-            {initialCategories.map((category) => (
+            {rows.map((category) => (
               <tr key={category.id}>
                 <td>{category.name}</td>
                 <td>{category._count.products}</td>

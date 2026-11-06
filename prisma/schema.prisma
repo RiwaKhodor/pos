@@ -17,7 +17,9 @@ model User {
   active       Boolean  @default(true)
   createdAt    DateTime @default(now())
   updatedAt    DateTime @updatedAt
-  sales        Sale[]
+  sales             Sale[]
+  createdProducts   Product[] @relation("ProductCreatedBy")
+  pushSubscriptions PushSubscription[]
 }
 
 model Category {
@@ -39,6 +41,11 @@ model Product {
   cost           Decimal    @default(0) @db.Decimal(12, 2)
   customsDuty    Decimal    @default(0) @db.Decimal(12, 4) // per-unit customs duty
   wholesalePrice Decimal    @default(0) @db.Decimal(12, 2)
+  onlinePrice    Decimal    @default(0) @db.Decimal(12, 2)
+  retailPrice    Decimal    @default(0) @db.Decimal(12, 2)
+  maxDiscountPercent Decimal? @db.Decimal(8, 4)
+  wholesaleMinQty Int       @default(0) // min units per wholesale sale (e.g. box of 24)
+  wholesaleMaxQty Int       @default(0) // max units per wholesale sale (0 = no max)
   stock          Int        @default(0)
   lowStockAt     Int        @default(5)
   maxStock       Int        @default(0)
@@ -49,9 +56,12 @@ model Product {
   category       Category?  @relation(fields: [categoryId], references: [id])
   containerId    String?
   container      Container? @relation(fields: [containerId], references: [id], onDelete: SetNull)
+  createdById    String?
+  createdBy      User?      @relation("ProductCreatedBy", fields: [createdById], references: [id], onDelete: SetNull)
   createdAt      DateTime   @default(now())
   updatedAt      DateTime   @updatedAt
   saleItems      SaleItem[]
+  stockLots      StockLot[]
 }
 
 model Container {
@@ -60,10 +70,12 @@ model Container {
   name      String
   note      String?
   arrivedAt DateTime?
-  totalDuty Decimal   @default(0) @db.Decimal(12, 2)
-  createdAt DateTime  @default(now())
-  updatedAt DateTime  @updatedAt
+  cost      Decimal   @default(0) @db.Decimal(12, 2) // shipment / container cost
+  totalDuty Decimal    @default(0) @db.Decimal(12, 2)
+  createdAt DateTime   @default(now())
+  updatedAt DateTime   @updatedAt
   products  Product[]
+  stockLots StockLot[]
 }
 
 model Customer {
@@ -92,7 +104,13 @@ model Sale {
   discount        Decimal       @default(0) @db.Decimal(12, 2)
   tax             Decimal       @default(0) @db.Decimal(12, 2)
   total           Decimal       @db.Decimal(12, 2)
-  pricingMode     String        @default("REGULAR") // REGULAR | WHOLESALE | VOLUME
+  pricingMode     String        @default("REGULAR") // REGULAR | WHOLESALE
+  payCurrency     String        @default("USD") // USD | LBP
+  exchangeRate    Decimal       @default(89500) @db.Decimal(12, 4) // 1 USD = this many L.L
+  amountTendered  Decimal       @default(0) @db.Decimal(14, 2) // in payCurrency
+  changeUsd       Decimal       @default(0) @db.Decimal(12, 2)
+  changeLbp       Decimal       @default(0) @db.Decimal(14, 2)
+  changeCurrency  String        @default("USD") // USD | LBP — currency change was given in
   cashierId       String
   cashier         User          @relation(fields: [cashierId], references: [id])
   customerId      String?
@@ -112,8 +130,44 @@ model SaleItem {
   name      String
   quantity  Int
   unitPrice Decimal @db.Decimal(12, 2)
-  unitCost  Decimal @default(0) @db.Decimal(12, 4)
-  lineTotal Decimal @db.Decimal(12, 2)
+  unitCost    Decimal              @default(0) @db.Decimal(12, 4)
+  lineTotal   Decimal              @db.Decimal(12, 2)
+  allocations SaleItemAllocation[]
+}
+
+// One receipt of an item. The same item can have a lot in container 1
+// and another lot in container 2, each with its own cost. Sales use the
+// oldest lot first.
+model StockLot {
+  id           String               @id @default(cuid())
+  productId    String
+  product      Product              @relation(fields: [productId], references: [id], onDelete: Cascade)
+  containerId  String?
+  container    Container?           @relation(fields: [containerId], references: [id], onDelete: SetNull)
+  quantity     Int                  @default(0)
+  cost         Decimal              @default(0) @db.Decimal(12, 2)
+  customsDuty  Decimal              @default(0) @db.Decimal(12, 4)
+  receivedAt   DateTime             @default(now())
+  createdAt    DateTime             @default(now())
+  allocations  SaleItemAllocation[]
+
+  @@index([productId, receivedAt])
+}
+
+model SaleItemAllocation {
+  id            String    @id @default(cuid())
+  saleItemId    String
+  saleItem      SaleItem  @relation(fields: [saleItemId], references: [id], onDelete: Cascade)
+  stockLotId    String?
+  stockLot      StockLot? @relation(fields: [stockLotId], references: [id], onDelete: SetNull)
+  containerId   String?
+  containerCode String?
+  quantity      Int
+  cost          Decimal   @default(0) @db.Decimal(12, 2)
+  customsDuty   Decimal   @default(0) @db.Decimal(12, 4)
+  unitCost      Decimal   @default(0) @db.Decimal(12, 4)
+
+  @@index([saleItemId])
 }
 
 model Expense {
@@ -127,14 +181,34 @@ model Expense {
 
 model StoreSettings {
   id            String  @id @default("default")
-  storeName     String  @default("My Store")
+  storeName     String  @default("VANO")
   currency      String  @default("USD")
+  usdToLbpRate  Decimal @default(89500) @db.Decimal(12, 4) // 1 USD = this many L.L
   taxRate       Decimal @default(0) @db.Decimal(8, 4)
   address       String?
   phone         String?
   receiptFooter String?
+  addItemPasswordHash String? // password cashiers need from the owner to add items
   // Volume discount % when cart subtotal reaches these amounts
   volumeDisc100 Decimal @default(5) @db.Decimal(8, 4)
   volumeDisc200 Decimal @default(10) @db.Decimal(8, 4)
   volumeDisc300 Decimal @default(15) @db.Decimal(8, 4)
+  discAbove500   Decimal @default(0) @db.Decimal(8, 4)
+  discAbove1000  Decimal @default(0) @db.Decimal(8, 4)
+  discAbove3000  Decimal @default(0) @db.Decimal(8, 4)
+  discAbove5000  Decimal @default(0) @db.Decimal(8, 4)
+  discAbove7000  Decimal @default(0) @db.Decimal(8, 4)
+  discAbove10000 Decimal @default(0) @db.Decimal(8, 4)
+}
+
+model PushSubscription {
+  id        String   @id @default(cuid())
+  userId    String
+  endpoint  String   @unique
+  p256dh    String
+  auth      String
+  userAgent String?
+  createdAt DateTime @default(now())
+  updatedAt DateTime @updatedAt
+  user      User     @relation(fields: [userId], references: [id], onDelete: Cascade)
 }

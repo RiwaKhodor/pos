@@ -1,44 +1,47 @@
 import { authErrorResponse, requireAuth } from "@/lib/auth";
-import { prisma } from "@/lib/prisma";
 import { jsonMoney } from "@/lib/money";
+import { isDbUnavailable } from "@/lib/db-unavailable";
+import { refreshCatalogFromSupabase, searchCatalog } from "@/lib/catalog-cache";
+import { syncSnapshot } from "@/lib/sync-sales";
 
 export async function GET(request: Request) {
   try {
     await requireAuth();
     const { searchParams } = new URL(request.url);
-    const q = searchParams.get("q")?.trim() || "";
-
-    const products = await prisma.product.findMany({
-      where: {
-        active: true,
-        showInPos: true,
-        ...(q
-          ? {
-              OR: [
-                { name: { contains: q, mode: "insensitive" } },
-                { sku: { contains: q, mode: "insensitive" } },
-                { barcode: { contains: q, mode: "insensitive" } },
-              ],
-            }
-          : {}),
-      },
-      select: {
-        id: true,
-        name: true,
-        sku: true,
-        barcode: true,
-        unit: true,
-        price: true,
-        wholesalePrice: true,
-        stock: true,
-        trackQty: true,
-        category: { select: { id: true, name: true } },
-      },
-      orderBy: { name: "asc" },
-      take: 50,
+    const q = searchParams.get("q")?.trim().toLowerCase() || "";
+    const status = syncSnapshot();
+    if (!status.catalogAt) {
+      try {
+        await refreshCatalogFromSupabase();
+      } catch (error) {
+        if (!isDbUnavailable(error)) throw error;
+      }
+    }
+    const products = searchCatalog(q).map((product) => ({
+      id: product.id,
+      name: product.name,
+      sku: product.sku,
+      barcode: product.barcode,
+      unit: product.unit,
+      price: product.price,
+      wholesalePrice: product.wholesalePrice,
+      onlinePrice: product.onlinePrice,
+      retailPrice: product.retailPrice,
+      maxDiscountPercent:
+        product.maxDiscountPercent == null
+          ? null
+          : Number(product.maxDiscountPercent),
+      wholesaleMinQty: product.wholesaleMinQty,
+      wholesaleMaxQty: product.wholesaleMaxQty,
+      stock: product.stock,
+      trackQty: product.trackQty,
+    }));
+    const fresh = syncSnapshot();
+    return jsonMoney({
+      products,
+      stale: fresh.catalogStale,
+      offline: fresh.mode === "offline",
     });
-
-    return jsonMoney({ products });
   } catch (error) {
     return authErrorResponse(error);
   }

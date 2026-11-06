@@ -2,6 +2,7 @@
 
 import { useEffect, useState } from "react";
 import { downloadExcelCsv } from "@/lib/exportCsv";
+import { formatLbp, toLbp } from "@/lib/fx";
 
 function todayIso() {
   return new Date().toISOString().slice(0, 10);
@@ -30,13 +31,26 @@ type Row = {
   marginPct: number;
 };
 
-export function SalesStatisticsReport({ currency }: { currency: string }) {
+export function SalesStatisticsReport({
+  currency,
+  usdToLbpRate,
+}: {
+  currency: string;
+  usdToLbpRate: number;
+}) {
+  const [reportCurr, setReportCurr] = useState(currency || "USD");
   const [from, setFrom] = useState(monthStartIso());
   const [to, setTo] = useState(todayIso());
   const [rows, setRows] = useState<Row[]>([]);
   const [totalSales, setTotalSales] = useState(0);
   const [selected, setSelected] = useState<string | null>(null);
   const [loading, setLoading] = useState(false);
+  const rate = usdToLbpRate > 0 ? usdToLbpRate : 89500;
+  const inLbp = reportCurr === "LBP";
+
+  function money(n: number) {
+    return inLbp ? formatLbp(toLbp(n, rate)) : formatAmount(n);
+  }
 
   async function fill() {
     setLoading(true);
@@ -72,9 +86,14 @@ export function SalesStatisticsReport({ currency }: { currency: string }) {
           </div>
         </div>
         <div className="desk-field">
-          <label>Report Curr.</label>
-          <select value={currency} disabled>
-            <option value={currency}>{currency}</option>
+          <label htmlFor="sales-curr">Report Curr.</label>
+          <select
+            id="sales-curr"
+            value={reportCurr}
+            onChange={(e) => setReportCurr(e.target.value)}
+          >
+            <option value="USD">USD</option>
+            <option value="LBP">L.L</option>
           </select>
         </div>
         <button type="button" className="desk-btn" onClick={fill} disabled={loading}>
@@ -111,16 +130,10 @@ export function SalesStatisticsReport({ currency }: { currency: string }) {
                   <td>{row.itemCode}</td>
                   <td>{row.itemName}</td>
                   <td className="report-amount">{row.salesQty.toFixed(1)}</td>
-                  <td className="report-amount">
-                    {formatAmount(row.totalDiscount)}
-                  </td>
-                  <td className="report-amount">
-                    {formatAmount(row.totalSales)}
-                  </td>
-                  <td className="report-amount">
-                    {formatAmount(row.totalCost)}
-                  </td>
-                  <td className="report-amount">{formatAmount(row.margin)}</td>
+                  <td className="report-amount">{money(row.totalDiscount)}</td>
+                  <td className="report-amount">{money(row.totalSales)}</td>
+                  <td className="report-amount">{money(row.totalCost)}</td>
+                  <td className="report-amount">{money(row.margin)}</td>
                   <td className="report-amount">
                     {formatAmount(row.marginPct)}%
                   </td>
@@ -156,10 +169,10 @@ export function SalesStatisticsReport({ currency }: { currency: string }) {
                   row.itemCode,
                   row.itemName,
                   row.salesQty,
-                  row.totalDiscount,
-                  row.totalSales,
-                  row.totalCost,
-                  row.margin,
+                  inLbp ? toLbp(row.totalDiscount, rate) : row.totalDiscount,
+                  inLbp ? toLbp(row.totalSales, rate) : row.totalSales,
+                  inLbp ? toLbp(row.totalCost, rate) : row.totalCost,
+                  inLbp ? toLbp(row.margin, rate) : row.margin,
                   row.marginPct,
                 ])
               )
@@ -169,7 +182,7 @@ export function SalesStatisticsReport({ currency }: { currency: string }) {
           </button>
         </div>
         <div className="text-sm font-bold">
-          TOTAL SALES: {formatAmount(totalSales)}
+          TOTAL SALES: {money(totalSales)}
         </div>
       </div>
     </div>

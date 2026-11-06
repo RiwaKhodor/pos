@@ -84,7 +84,7 @@ export function ProductsManager({
   async function removeProduct(id: string) {
     if (!confirm("Delete this product?")) return;
     const res = await fetch(`/api/products/${id}`, { method: "DELETE" });
-    if (!res.ok) {
+    if (!res.ok && res.status < 500) {
       const data = await res.json();
       alert(data.error || "Could not delete product");
       return;

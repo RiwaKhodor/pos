@@ -36,7 +36,7 @@ export function CustomersManager({ customers }: { customers: Customer[] }) {
   async function removeCustomer(id: string) {
     if (!confirm("Delete this customer?")) return;
     const res = await fetch(`/api/customers/${id}`, { method: "DELETE" });
-    if (!res.ok) {
+    if (!res.ok && res.status < 500) {
       const data = await res.json();
       alert(data.error || "Could not delete");
       return;

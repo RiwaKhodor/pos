@@ -2,6 +2,7 @@ import { NextResponse } from "next/server";
 import { authErrorResponse, requireAuth, requireRole } from "@/lib/auth";
 import { Role } from "@/lib/roles";
 import { prisma } from "@/lib/prisma";
+import { notifyOwners } from "@/lib/push";
 
 export async function GET(request: Request) {
   try {
@@ -47,6 +48,12 @@ export async function POST(request: Request) {
       },
     });
 
+    notifyOwners({
+      title: "Customer added",
+      body: customer.phone ? `${name} · ${customer.phone}` : name,
+      url: "/owner",
+      tag: `customer:${customer.id}:${Date.now()}`,
+    });
     return NextResponse.json({ customer }, { status: 201 });
   } catch (error) {
     return authErrorResponse(error);

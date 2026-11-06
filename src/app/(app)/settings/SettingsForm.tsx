@@ -2,27 +2,34 @@
 
 import { FormEvent, useState } from "react";
 import { useRouter } from "next/navigation";
+import { DEFAULT_USD_TO_LBP, formatRate } from "@/lib/fx";
 
 type Settings = {
   storeName: string;
-  currency: string;
+  usdToLbpRate: number;
   taxRate: number;
   receiptFooter: string | null;
-  volumeDisc100: number;
-  volumeDisc200: number;
-  volumeDisc300: number;
+  discAbove500: number;
+  discAbove1000: number;
+  discAbove3000: number;
+  discAbove5000: number;
+  discAbove7000: number;
+  discAbove10000: number;
 };
 
 export function SettingsForm({ settings }: { settings: Settings }) {
   const router = useRouter();
   const [form, setForm] = useState({
     storeName: settings.storeName,
-    currency: settings.currency,
+    usdToLbpRate: String(settings.usdToLbpRate || DEFAULT_USD_TO_LBP),
     taxRate: String(settings.taxRate),
     receiptFooter: settings.receiptFooter || "",
-    volumeDisc100: String(settings.volumeDisc100 ?? 5),
-    volumeDisc200: String(settings.volumeDisc200 ?? 10),
-    volumeDisc300: String(settings.volumeDisc300 ?? 15),
+    discAbove500: String(settings.discAbove500 || ""),
+    discAbove1000: String(settings.discAbove1000 || ""),
+    discAbove3000: String(settings.discAbove3000 || ""),
+    discAbove5000: String(settings.discAbove5000 || ""),
+    discAbove7000: String(settings.discAbove7000 || ""),
+    discAbove10000: String(settings.discAbove10000 || ""),
   });
   const [message, setMessage] = useState("");
   const [error, setError] = useState("");
@@ -36,18 +43,21 @@ export function SettingsForm({ settings }: { settings: Settings }) {
       headers: { "Content-Type": "application/json" },
       body: JSON.stringify({
         storeName: form.storeName,
-        currency: form.currency,
+        usdToLbpRate: Number(form.usdToLbpRate || DEFAULT_USD_TO_LBP),
         taxRate: Number(form.taxRate || 0),
         receiptFooter: form.receiptFooter || null,
-        volumeDisc100: Number(form.volumeDisc100 || 0),
-        volumeDisc200: Number(form.volumeDisc200 || 0),
-        volumeDisc300: Number(form.volumeDisc300 || 0),
+        discAbove500: Number(form.discAbove500 || 0),
+        discAbove1000: Number(form.discAbove1000 || 0),
+        discAbove3000: Number(form.discAbove3000 || 0),
+        discAbove5000: Number(form.discAbove5000 || 0),
+        discAbove7000: Number(form.discAbove7000 || 0),
+        discAbove10000: Number(form.discAbove10000 || 0),
         address: null,
         phone: null,
       }),
     });
     const data = await res.json();
-    if (!res.ok) {
+    if (!res.ok && res.status < 500) {
       setError(data.error || "Failed to save");
       return;
     }
@@ -55,9 +65,16 @@ export function SettingsForm({ settings }: { settings: Settings }) {
     router.refresh();
   }
 
+  const ratePreview = Number(form.usdToLbpRate || DEFAULT_USD_TO_LBP);
+
   return (
     <div className="desk-panel">
       <div className="mb-3 text-sm font-bold">Preferences</div>
+      <p className="mb-3 text-sm">
+        <a className="underline" href="/settings/notifications">
+          Notifications
+        </a>
+      </p>
       <form onSubmit={onSubmit} className="max-w-xl space-y-3">
         <div className="desk-form-row">
           <label htmlFor="storeName">Store Name</label>
@@ -68,14 +85,40 @@ export function SettingsForm({ settings }: { settings: Settings }) {
             onChange={(e) => setForm({ ...form, storeName: e.target.value })}
           />
         </div>
-        <div className="desk-form-row">
-          <label htmlFor="currency">Currency</label>
-          <input
-            id="currency"
-            value={form.currency}
-            onChange={(e) => setForm({ ...form, currency: e.target.value })}
-          />
-        </div>
+
+        <fieldset className="desk-fieldset">
+          <legend>Currencies</legend>
+          <p className="mb-2 text-[11px] text-slate-500">
+            Prices are in US Dollars. Customers can pay in Dollars or Lebanese
+            Lira (L.L). Change is shown in both.
+          </p>
+          <div className="mb-2 grid grid-cols-2 gap-2 text-xs">
+            <div className="border border-[#aaa] bg-white px-3 py-2">
+              US Dollars ($)
+            </div>
+            <div className="border border-[#aaa] bg-white px-3 py-2">
+              Lebanese Lira (L.L)
+            </div>
+          </div>
+          <div className="desk-form-row">
+            <label htmlFor="rate">USD → L.L rate</label>
+            <input
+              id="rate"
+              type="number"
+              step="1"
+              min="1"
+              required
+              value={form.usdToLbpRate}
+              onChange={(e) =>
+                setForm({ ...form, usdToLbpRate: e.target.value })
+              }
+            />
+          </div>
+          <p className="text-[11px] text-slate-500">
+            1 Dollar = {formatRate(ratePreview || DEFAULT_USD_TO_LBP)} L.L
+          </p>
+        </fieldset>
+
         <div className="desk-form-row">
           <label htmlFor="tax">Tax %</label>
           <input
@@ -85,53 +128,42 @@ export function SettingsForm({ settings }: { settings: Settings }) {
             value={form.taxRate}
             onChange={(e) => setForm({ ...form, taxRate: e.target.value })}
           />
+          <p className="text-[11px] text-slate-500">
+            Added on top of the sale at payment. Item prices stay the same.
+          </p>
         </div>
 
         <fieldset className="desk-fieldset">
-          <legend>Volume discount % (by receipt total)</legend>
+          <legend>Receipt total discount</legend>
           <p className="mb-2 text-[11px] text-slate-500">
-            Used when POS pricing mode is &quot;Volume %&quot;. Example: buy 100+ →
-            first %, 200+ → second %, 300+ → third %.
+            When the receipt total, at normal prices, reaches an amount, that
+            percent comes off the receipt. The register selects it automatically.
+            You can change it at payment.
           </p>
-          <div className="desk-form-row">
-            <label htmlFor="d100">If total ≥ 100</label>
-            <input
-              id="d100"
-              type="number"
-              step="0.01"
-              min="0"
-              value={form.volumeDisc100}
-              onChange={(e) =>
-                setForm({ ...form, volumeDisc100: e.target.value })
-              }
-            />
-          </div>
-          <div className="desk-form-row">
-            <label htmlFor="d200">If total ≥ 200</label>
-            <input
-              id="d200"
-              type="number"
-              step="0.01"
-              min="0"
-              value={form.volumeDisc200}
-              onChange={(e) =>
-                setForm({ ...form, volumeDisc200: e.target.value })
-              }
-            />
-          </div>
-          <div className="desk-form-row">
-            <label htmlFor="d300">If total ≥ 300</label>
-            <input
-              id="d300"
-              type="number"
-              step="0.01"
-              min="0"
-              value={form.volumeDisc300}
-              onChange={(e) =>
-                setForm({ ...form, volumeDisc300: e.target.value })
-              }
-            />
-          </div>
+          {(
+            [
+              ["discAbove10000", "Above $10,000"],
+              ["discAbove7000", "Above $7,000"],
+              ["discAbove5000", "Above $5,000"],
+              ["discAbove3000", "Above $3,000"],
+              ["discAbove1000", "Above $1,000"],
+              ["discAbove500", "Above $500"],
+            ] as const
+          ).map(([key, label]) => (
+            <div className="desk-form-row" key={key}>
+              <label htmlFor={key}>{label} %</label>
+              <input
+                id={key}
+                type="number"
+                min="0"
+                max="100"
+                step="0.01"
+                value={form[key]}
+                placeholder="0"
+                onChange={(e) => setForm({ ...form, [key]: e.target.value })}
+              />
+            </div>
+          ))}
         </fieldset>
 
         <div className="desk-form-row">

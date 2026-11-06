@@ -1,0 +1,1 @@
+ALTER TABLE "Product" ADD COLUMN IF NOT EXISTS "maxDiscountPercent" DECIMAL(8,4);

@@ -1,7 +1,16 @@
 import { authErrorResponse, requireRole } from "@/lib/auth";
+import { bustCache } from "@/lib/data-cache";
 import { Role } from "@/lib/roles";
 import { prisma } from "@/lib/prisma";
 import { jsonMoney } from "@/lib/money";
+import { invalidateStoreNameCache } from "@/lib/store";
+import { setStoreNameCookie } from "@/lib/store-cookie";
+import { DEFAULT_USD_TO_LBP } from "@/lib/fx";
+import { readCachedSettings, writeCachedSettings } from "@/lib/catalog-cache";
+import { isDbUnavailable } from "@/lib/db-unavailable";
+import { queueOp, dropOp } from "@/lib/offline-ops";
+import { syncPendingSales } from "@/lib/sync-sales";
+import { notifyOwners } from "@/lib/push";
 
 export async function GET() {
   try {
@@ -14,9 +23,16 @@ export async function GET() {
         data: { id: "default" },
       });
     }
-    return jsonMoney({ settings });
+    return jsonMoney({
+      settings: {
+        ...settings,
+        addItemPasswordHash: undefined,
+      },
+    });
   } catch (error) {
-    return authErrorResponse(error);
+    if (!isDbUnavailable(error)) return authErrorResponse(error);
+    const cached = readCachedSettings();
+    return jsonMoney({ settings: cached });
   }
 }
 
@@ -25,38 +41,59 @@ export async function PUT(request: Request) {
     await requireRole(Role.OWNER);
     const body = await request.json();
 
-    const settings = await prisma.storeSettings.upsert({
-      where: { id: "default" },
-      update: {
-        storeName: String(body.storeName || "My Store"),
-        currency: String(body.currency || "USD"),
-        taxRate: Number(body.taxRate ?? 0),
-        address: body.address ? String(body.address) : null,
-        phone: body.phone ? String(body.phone) : null,
-        receiptFooter: body.receiptFooter
-          ? String(body.receiptFooter)
-          : null,
-        volumeDisc100: Number(body.volumeDisc100 ?? 5),
-        volumeDisc200: Number(body.volumeDisc200 ?? 10),
-        volumeDisc300: Number(body.volumeDisc300 ?? 15),
-      },
-      create: {
-        id: "default",
-        storeName: String(body.storeName || "My Store"),
-        currency: String(body.currency || "USD"),
-        taxRate: Number(body.taxRate ?? 0),
-        address: body.address ? String(body.address) : null,
-        phone: body.phone ? String(body.phone) : null,
-        receiptFooter: body.receiptFooter
-          ? String(body.receiptFooter)
-          : null,
-        volumeDisc100: Number(body.volumeDisc100 ?? 5),
-        volumeDisc200: Number(body.volumeDisc200 ?? 10),
-        volumeDisc300: Number(body.volumeDisc300 ?? 15),
-      },
-    });
+    const rate = Number(body.usdToLbpRate ?? DEFAULT_USD_TO_LBP);
+    const usdToLbpRate =
+      Number.isFinite(rate) && rate > 0 ? rate : DEFAULT_USD_TO_LBP;
+    const storeName = String(body.storeName || "VANO").trim() || "VANO";
+    const percent = (value: unknown) => {
+      const n = Number(value ?? 0);
+      if (!Number.isFinite(n) || n < 0) return 0;
+      return Math.min(n, 100);
+    };
+    const discounts = {
+      discAbove500: percent(body.discAbove500),
+      discAbove1000: percent(body.discAbove1000),
+      discAbove3000: percent(body.discAbove3000),
+      discAbove5000: percent(body.discAbove5000),
+      discAbove7000: percent(body.discAbove7000),
+      discAbove10000: percent(body.discAbove10000),
+    };
 
-    return jsonMoney({ settings });
+    const snapshot = {
+      storeName,
+      currency: "USD",
+      usdToLbpRate,
+      taxRate: Number(body.taxRate ?? 0),
+      address: body.address ? String(body.address) : null,
+      phone: body.phone ? String(body.phone) : null,
+      receiptFooter: body.receiptFooter ? String(body.receiptFooter) : null,
+      ...discounts,
+    };
+    writeCachedSettings(snapshot);
+
+    try {
+      await prisma.storeSettings.upsert({
+        where: { id: "default" },
+        update: snapshot,
+        create: { id: "default", ...snapshot },
+      });
+      dropOp("settings:default");
+    } catch (error) {
+      if (!isDbUnavailable(error)) throw error;
+      queueOp("settings:default", "settings", snapshot);
+    }
+    void syncPendingSales();
+    invalidateStoreNameCache();
+    bustCache("settings");
+    notifyOwners({
+      title: "Preferences updated",
+      body: `${storeName}: tax ${snapshot.taxRate}% · rate ${usdToLbpRate} · discounts ${discounts.discAbove500}% / ${discounts.discAbove1000}% / ${discounts.discAbove3000}% / ${discounts.discAbove5000}% / ${discounts.discAbove7000}% / ${discounts.discAbove10000}%`,
+      url: "/owner",
+      tag: `settings:${Date.now()}`,
+    });
+    const response = jsonMoney({ settings: snapshot });
+    setStoreNameCookie(response, snapshot.storeName);
+    return response;
   } catch (error) {
     return authErrorResponse(error);
   }

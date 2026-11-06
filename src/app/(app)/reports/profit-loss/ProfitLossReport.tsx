@@ -2,14 +2,19 @@
 
 import { useEffect, useState } from "react";
 import { downloadExcelCsv } from "@/lib/exportCsv";
+import { formatLbp, toLbp } from "@/lib/fx";
 
 function todayIso() {
-  return new Date().toISOString().slice(0, 10);
+  const d = new Date();
+  const month = String(d.getMonth() + 1).padStart(2, "0");
+  const day = String(d.getDate()).padStart(2, "0");
+  return `${d.getFullYear()}-${month}-${day}`;
 }
 
 function monthStartIso() {
   const d = new Date();
-  return new Date(d.getFullYear(), d.getMonth(), 1).toISOString().slice(0, 10);
+  const month = String(d.getMonth() + 1).padStart(2, "0");
+  return `${d.getFullYear()}-${month}-01`;
 }
 
 function formatAmount(n: number) {
@@ -27,12 +32,25 @@ type Summary = {
   profitLoss: number;
 };
 
-export function ProfitLossReport({ currency }: { currency: string }) {
-  const [from, setFrom] = useState(monthStartIso());
+export function ProfitLossReport({
+  currency,
+  usdToLbpRate,
+}: {
+  currency: string;
+  usdToLbpRate: number;
+}) {
+  const [reportCurr, setReportCurr] = useState(currency || "USD");
+  const [from, setFrom] = useState(monthStartIso);
   const [to, setTo] = useState(todayIso());
   const [summary, setSummary] = useState<Summary | null>(null);
   const [selected, setSelected] = useState("totalSales");
   const [loading, setLoading] = useState(false);
+  const rate = usdToLbpRate > 0 ? usdToLbpRate : 89500;
+  const inLbp = reportCurr === "LBP";
+
+  function money(n: number) {
+    return inLbp ? formatLbp(toLbp(n, rate)) : formatAmount(n);
+  }
 
   async function fill() {
     setLoading(true);
@@ -88,9 +106,14 @@ export function ProfitLossReport({ currency }: { currency: string }) {
           </div>
         </div>
         <div className="desk-field">
-          <label>Report Curr.</label>
-          <select value={currency} disabled>
-            <option value={currency}>{currency}</option>
+          <label htmlFor="pl-curr">Report Curr.</label>
+          <select
+            id="pl-curr"
+            value={reportCurr}
+            onChange={(e) => setReportCurr(e.target.value)}
+          >
+            <option value="USD">USD</option>
+            <option value="LBP">L.L</option>
           </select>
         </div>
         <button type="button" className="desk-btn" onClick={fill} disabled={loading}>
@@ -115,7 +138,7 @@ export function ProfitLossReport({ currency }: { currency: string }) {
                 onClick={() => setSelected(row.key)}
               >
                 <td>{row.label}</td>
-                <td className="report-amount">{formatAmount(row.amount)}</td>
+                <td className="report-amount">{money(row.amount)}</td>
               </tr>
             ))}
           </tbody>
@@ -136,11 +159,11 @@ export function ProfitLossReport({ currency }: { currency: string }) {
               `profit-loss-${from}_to_${to}.csv`,
               ["Description", "Amount"],
               [
-                ["Total Sales", summary.totalSales],
-                ["Cost Of Goods Sold", summary.costOfGoodsSold],
-                ["Gross Profit", summary.grossProfit],
-                ["Expenses", summary.expenses],
-                ["Profit/Loss", summary.profitLoss],
+                ["Total Sales", inLbp ? toLbp(summary.totalSales, rate) : summary.totalSales],
+                ["Cost Of Goods Sold", inLbp ? toLbp(summary.costOfGoodsSold, rate) : summary.costOfGoodsSold],
+                ["Gross Profit", inLbp ? toLbp(summary.grossProfit, rate) : summary.grossProfit],
+                ["Expenses", inLbp ? toLbp(summary.expenses, rate) : summary.expenses],
+                ["Profit/Loss", inLbp ? toLbp(summary.profitLoss, rate) : summary.profitLoss],
               ]
             );
           }}

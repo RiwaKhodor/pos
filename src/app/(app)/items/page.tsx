@@ -1,39 +1,83 @@
 import { redirect } from "next/navigation";
 import { getSessionUser } from "@/lib/auth";
 import { Role } from "@/lib/roles";
+import { ItemsList } from "./ItemsList";
+import { getCachedItems } from "@/lib/data-cache";
+import { isDbUnavailable } from "@/lib/db-unavailable";
+import { listLocalItems } from "@/lib/catalog-cache";
+import { isOwnerWeb } from "@/lib/host";
 import { prisma } from "@/lib/prisma";
 import { toNum } from "@/lib/money";
-import { ItemsList } from "./ItemsList";
 
 export default async function ItemsPage() {
   const user = await getSessionUser();
   if (!user) redirect("/login");
-  if (user.role !== Role.OWNER) redirect("/pos");
+  if (isOwnerWeb()) {
+    if (user.role !== Role.OWNER) redirect("/login");
+    const products = await prisma.product.findMany({
+      orderBy: { name: "asc" },
+      select: {
+        id: true,
+        name: true,
+        sku: true,
+        barcode: true,
+        unit: true,
+        price: true,
+        wholesalePrice: true,
+        onlinePrice: true,
+        retailPrice: true,
+        cost: true,
+        customsDuty: true,
+        stock: true,
+        lowStockAt: true,
+        active: true,
+        showInPos: true,
+        category: { select: { name: true } },
+        container: { select: { code: true, name: true } },
+      },
+    });
+    return (
+      <ItemsList
+        viewOnly
+        canManage={false}
+        initialItems={products.map((item) => ({
+          id: item.id,
+          name: item.name,
+          sku: item.sku,
+          barcode: item.barcode,
+          unit: item.unit,
+          price: toNum(item.price),
+          wholesalePrice: toNum(item.wholesalePrice),
+          onlinePrice: toNum(item.onlinePrice),
+          retailPrice: toNum(item.retailPrice),
+          cost: toNum(item.cost),
+          customsDuty: toNum(item.customsDuty),
+          stock: item.stock,
+          lowStockAt: item.lowStockAt,
+          active: item.active,
+          showInPos: item.showInPos,
+          categoryName: item.category?.name || null,
+          containerCode: item.container?.name || item.container?.code || null,
+        }))}
+      />
+    );
+  }
 
-  const products = await prisma.product.findMany({
-    include: { category: true, container: true },
-    orderBy: { name: "asc" },
-  });
+  const localItems = listLocalItems();
+  let initialItems = localItems;
+  if (localItems.length === 0) {
+    try {
+      initialItems = await getCachedItems();
+    } catch (error) {
+      console.error(error);
+    }
+  }
 
   return (
     <ItemsList
-      initialItems={products.map((p) => ({
-        id: p.id,
-        name: p.name,
-        sku: p.sku,
-        barcode: p.barcode,
-        unit: p.unit,
-        price: toNum(p.price),
-        wholesalePrice: toNum(p.wholesalePrice),
-        cost: toNum(p.cost),
-        customsDuty: toNum(p.customsDuty),
-        stock: p.stock,
-        lowStockAt: p.lowStockAt,
-        active: p.active,
-        showInPos: p.showInPos,
-        categoryName: p.category?.name || null,
-        containerCode: p.container?.code || null,
-      }))}
+      initialItems={initialItems}
+      canManage={user.role === Role.OWNER}
+      viewerId={user.id}
     />
   );
 }
