@@ -14,6 +14,9 @@ import {
   DEFAULT_USD_TO_LBP,
 } from "@/lib/fx";
 import { pricingModeLabel } from "@/lib/price-tiers";
+import { RECEIPT_LOCATION, RECEIPT_PHONE } from "@/lib/store-info";
+
+export { RECEIPT_LOCATION, RECEIPT_PHONE };
 
 type SaleForPrint = {
   id: string;
@@ -41,9 +44,6 @@ type SaleForPrint = {
     lineTotal: unknown;
   }[];
 };
-
-export const RECEIPT_LOCATION = "Akbiyeh - Main Road";
-export const RECEIPT_PHONE = "81 604 320";
 
 type SettingsForPrint = {
   storeName: string;

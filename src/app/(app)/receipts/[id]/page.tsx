@@ -13,7 +13,7 @@ import { readLocalSale } from "@/lib/offline-sale";
 import { isOwnerWeb } from "@/lib/host";
 import { PageHeader, Panel } from "@/components/ui";
 import { PrintButton } from "./PrintButton";
-import { RECEIPT_LOCATION, RECEIPT_PHONE } from "@/lib/receipt-print";
+import { RECEIPT_LOCATION, RECEIPT_PHONE } from "@/lib/store-info";
 import {
   DEFAULT_USD_TO_LBP,
   formatLbp,

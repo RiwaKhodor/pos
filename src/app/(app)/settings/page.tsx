@@ -3,7 +3,6 @@ import { getSessionUser } from "@/lib/auth";
 import { getCachedStoreSettings } from "@/lib/data-cache";
 import { Role } from "@/lib/roles";
 import { SettingsForm } from "./SettingsForm";
-import { isDbUnavailable } from "@/lib/db-unavailable";
 import { readCachedSettings } from "@/lib/catalog-cache";
 
 export default async function SettingsPage() {

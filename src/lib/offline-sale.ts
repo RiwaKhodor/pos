@@ -6,7 +6,7 @@ import {
   tenderPayCurrency,
   type PayCurrency,
 } from "@/lib/fx";
-import { RECEIPT_PHONE } from "@/lib/receipt-print";
+import { RECEIPT_PHONE } from "@/lib/store-info";
 import { localDb, readSnapshot, registerId, writeSnapshot } from "@/lib/local-db";
 import {
   readCachedSettings,

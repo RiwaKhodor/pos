@@ -6,7 +6,7 @@ import { jsonMoney } from "@/lib/money";
 import { invalidateStoreNameCache } from "@/lib/store";
 import { setStoreNameCookie } from "@/lib/store-cookie";
 import { DEFAULT_USD_TO_LBP } from "@/lib/fx";
-import { RECEIPT_PHONE } from "@/lib/receipt-print";
+import { RECEIPT_PHONE } from "@/lib/store-info";
 import { readCachedSettings, writeCachedSettings } from "@/lib/catalog-cache";
 import { isDbUnavailable } from "@/lib/db-unavailable";
 import { queueOp, dropOp } from "@/lib/offline-ops";
@@ -60,12 +60,30 @@ export async function PUT(request: Request) {
       discAbove10000: percent(body.discAbove10000),
     };
 
+    const cached = readCachedSettings();
+    let storedAddress = cached?.address ?? null;
+    try {
+      const current = await prisma.storeSettings.findUnique({
+        where: { id: "default" },
+        select: { address: true },
+      });
+      if (current) storedAddress = current.address;
+    } catch (error) {
+      if (!isDbUnavailable(error)) throw error;
+    }
+    const address =
+      body.address === undefined
+        ? storedAddress
+        : body.address
+          ? String(body.address)
+          : null;
+
     const snapshot = {
       storeName,
       currency: "USD",
       usdToLbpRate,
       taxRate: Number(body.taxRate ?? 0),
-      address: body.address ? String(body.address) : null,
+      address,
       phone: body.phone ? String(body.phone).trim() : RECEIPT_PHONE,
       receiptFooter: body.receiptFooter ? String(body.receiptFooter) : null,
       ...discounts,

@@ -3,7 +3,7 @@
 import { FormEvent, useState } from "react";
 import { useRouter } from "next/navigation";
 import { DEFAULT_USD_TO_LBP, formatRate } from "@/lib/fx";
-import { RECEIPT_PHONE } from "@/lib/receipt-print";
+import { RECEIPT_PHONE } from "@/lib/store-info";
 
 type Settings = {
   storeName: string;
@@ -56,7 +56,6 @@ export function SettingsForm({ settings }: { settings: Settings }) {
         discAbove5000: Number(form.discAbove5000 || 0),
         discAbove7000: Number(form.discAbove7000 || 0),
         discAbove10000: Number(form.discAbove10000 || 0),
-        address: null,
       }),
     });
     const data = await res.json();
