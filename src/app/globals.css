@@ -18,10 +18,15 @@
   --font-mono: var(--font-geist-mono);
 }
 
+html {
+  font-size: 17px;
+}
+
 body {
   background: var(--background);
   color: var(--foreground);
   font-family: var(--font-geist-sans), "Segoe UI", Tahoma, sans-serif;
+  font-size: 1rem;
 }
 
 input,
@@ -41,7 +46,7 @@ td {
   text-align: left;
   padding: 0.65rem 0.75rem;
   border-bottom: 1px solid #e2e8f0;
-  font-size: 0.875rem;
+  font-size: 0.95rem;
 }
 
 th {
@@ -67,14 +72,14 @@ th {
   background: linear-gradient(180deg, #f7f7f7 0%, #e4e4e4 100%);
   border-bottom: 1px solid #b0b0b0;
   padding: 4px 10px;
-  font-size: 13px;
+  font-size: 15px;
   font-weight: 700;
   letter-spacing: 0.02em;
 }
 
 .pos-link {
   margin-left: auto;
-  font-size: 12px;
+  font-size: 14px;
   font-weight: 600;
 }
 
@@ -120,8 +125,8 @@ th {
 .pos-menu button {
   background: transparent;
   border: 0;
-  padding: 5px 10px;
-  font-size: 12px;
+  padding: 6px 12px;
+  font-size: 14px;
   color: #222;
   cursor: pointer;
 }
@@ -143,7 +148,7 @@ th {
 
 .pos-field label {
   display: block;
-  font-size: 11px;
+  font-size: 13px;
   font-weight: 600;
   margin-bottom: 3px;
   color: #333;
@@ -155,8 +160,8 @@ th {
   width: 100%;
   border: 1px solid #7a7a7a;
   background: #fff;
-  padding: 5px 8px;
-  font-size: 13px;
+  padding: 6px 8px;
+  font-size: 15px;
   box-shadow: inset 0 1px 2px rgba(0, 0, 0, 0.08);
 }
 
@@ -172,8 +177,8 @@ th {
   border: 1px solid #6e6e6e;
   background: linear-gradient(180deg, #f5f5f5 0%, #d0d0d0 100%);
   box-shadow: inset 0 1px 0 #fff;
-  padding: 6px 10px;
-  font-size: 12px;
+  padding: 7px 12px;
+  font-size: 14px;
   font-weight: 700;
   cursor: pointer;
   color: #1a1a1a;
@@ -192,7 +197,7 @@ th {
   min-width: 108px;
   min-height: 46px;
   padding: 8px 12px;
-  font-size: 12px;
+  font-size: 14px;
   line-height: 1.2;
   text-align: center;
 }
@@ -219,16 +224,16 @@ th {
   border-bottom: 1px solid #9a9a9a;
   border-right: 1px solid #cfcfcf;
   color: #222;
-  font-size: 12px;
+  font-size: 14px;
   font-weight: 700;
-  padding: 7px 8px;
+  padding: 8px 8px;
 }
 
 .pos-table td {
   border-bottom: 1px solid #d8d8d8;
   border-right: 1px solid #ececec;
-  padding: 6px 8px;
-  font-size: 13px;
+  padding: 8px 8px;
+  font-size: 15px;
   color: #111;
 }
 
@@ -246,15 +251,15 @@ th {
   min-width: 22px;
   height: 22px;
   padding: 0 4px;
-  font-size: 14px;
+  font-size: 16px;
   font-weight: 700;
   line-height: 1;
   cursor: pointer;
 }
 
 .pos-qty-value {
-  min-width: 52px;
-  font-size: 12px;
+  min-width: 56px;
+  font-size: 14px;
   font-weight: 600;
 }
 
@@ -263,7 +268,7 @@ th {
   height: 22px;
   border: 1px solid #174a8c;
   padding: 0 4px;
-  font-size: 12px;
+  font-size: 14px;
   text-align: center;
 }
 
@@ -324,7 +329,7 @@ th {
   flex: 1 0 100%;
   margin-top: -8px;
   text-align: right;
-  font-size: 12px;
+  font-size: 14px;
   font-weight: 700;
   letter-spacing: 0.03em;
   white-space: nowrap;
@@ -343,8 +348,8 @@ th {
 .pos-status {
   background: #efefef;
   border-top: 1px solid #b8b8b8;
-  padding: 4px 10px;
-  font-size: 11px;
+  padding: 5px 10px;
+  font-size: 13px;
   color: #333;
 }
 
@@ -372,7 +377,7 @@ th {
   background: linear-gradient(180deg, #2f6fb5 0%, #1e4f88 100%);
   color: #fff;
   padding: 8px 12px;
-  font-size: 13px;
+  font-size: 15px;
   font-weight: 700;
 }
 
@@ -415,8 +420,8 @@ th {
   gap: 12px;
   background: linear-gradient(180deg, #fafafa, #e6e6e6);
   border-bottom: 1px solid #b5b5b5;
-  padding: 4px 10px;
-  font-size: 13px;
+  padding: 5px 10px;
+  font-size: 15px;
   font-weight: 700;
 }
 
@@ -434,6 +439,20 @@ th {
 
 .update-notice {
   position: relative;
+  display: inline-flex;
+  align-items: center;
+  gap: 8px;
+}
+
+.update-notice-banner {
+  border: 1px solid #8a1f1f;
+  background: #c0392b;
+  color: #fff;
+  font-size: 13px;
+  font-weight: 700;
+  padding: 4px 10px;
+  cursor: pointer;
+  white-space: nowrap;
 }
 
 .update-notice-btn {
@@ -506,7 +525,7 @@ th {
 }
 
 .desktop-user {
-  font-size: 11px;
+  font-size: 13px;
   font-weight: 600;
   color: #555;
 }
@@ -515,7 +534,7 @@ th {
   border: 1px solid #8a8a8a;
   background: linear-gradient(180deg, #ffffff, #e4e4e4);
   color: #222;
-  font-size: 11px;
+  font-size: 13px;
   font-weight: 700;
   line-height: 1.2;
   padding: 2px 10px;
@@ -541,8 +560,8 @@ th {
 .desktop-menu-btn {
   border: 0;
   background: transparent;
-  padding: 6px 10px;
-  font-size: 12px;
+  padding: 7px 12px;
+  font-size: 14px;
   cursor: pointer;
   color: #222;
 }
@@ -571,8 +590,8 @@ th {
   text-align: left;
   border: 0;
   background: transparent;
-  padding: 5px 14px;
-  font-size: 12px;
+  padding: 6px 14px;
+  font-size: 14px;
   cursor: pointer;
   color: inherit;
   text-decoration: none;
@@ -604,8 +623,8 @@ th {
   background: #eef3f8;
   border: 1px solid #9bb4cc;
   border-bottom: 0;
-  padding: 5px 10px;
-  font-size: 12px;
+  padding: 6px 12px;
+  font-size: 14px;
   white-space: nowrap;
 }
 
@@ -657,7 +676,7 @@ th {
 
 .desk-field label {
   display: block;
-  font-size: 11px;
+  font-size: 13px;
   font-weight: 700;
   margin-bottom: 2px;
 }
@@ -667,19 +686,19 @@ th {
 .desk-field textarea {
   border: 1px solid #7a7a7a;
   background: #fff;
-  padding: 4px 6px;
-  font-size: 12px;
-  min-height: 26px;
+  padding: 6px 8px;
+  font-size: 14px;
+  min-height: 30px;
 }
 
 .desk-btn {
   border: 1px solid #6e6e6e;
   background: linear-gradient(180deg, #f8f8f8, #d4d4d4);
-  padding: 5px 12px;
-  font-size: 12px;
+  padding: 6px 14px;
+  font-size: 14px;
   font-weight: 700;
   cursor: pointer;
-  min-height: 28px;
+  min-height: 32px;
 }
 
 .desk-btn:hover:not(:disabled) {
@@ -709,8 +728,8 @@ th {
 .desk-grid td {
   border-right: 1px solid #ddd;
   border-bottom: 1px solid #ddd;
-  padding: 5px 8px;
-  font-size: 12px;
+  padding: 6px 10px;
+  font-size: 14px;
   white-space: nowrap;
 }
 
@@ -751,7 +770,7 @@ th {
 }
 
 .desk-fieldset legend {
-  font-size: 12px;
+  font-size: 14px;
   font-weight: 700;
   padding: 0 4px;
 }
@@ -769,7 +788,7 @@ th {
 }
 
 .desk-form-row label {
-  font-size: 12px;
+  font-size: 14px;
   font-weight: 600;
 }
 
@@ -777,8 +796,8 @@ th {
 .desk-form-row select,
 .desk-form-row textarea {
   border: 1px solid #7a7a7a;
-  padding: 4px 6px;
-  font-size: 12px;
+  padding: 6px 8px;
+  font-size: 14px;
   background: #fff;
   width: 100%;
 }
@@ -1108,7 +1127,7 @@ th {
 
 .sale-card-meta {
   margin-top: 4px;
-  font-size: 12px;
+  font-size: 14px;
   color: #444;
 }
 

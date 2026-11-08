@@ -307,7 +307,11 @@ function Send-EscPosReceipt([string]$Printer) {
   if ($r.amountReceived) {
     Add-EscText $ms "--------------------------------"
     Add-EscText $ms ("Paid in".PadRight(16) + [string]$r.paidIn)
-    Add-EscText $ms ("Received".PadRight(16) + [string]$r.amountReceived)
+    if ($r.amountReceivedUsd) { Add-EscText $ms ("Received $".PadRight(16) + [string]$r.amountReceivedUsd) }
+    if ($r.amountReceivedLbp) { Add-EscText $ms ("Received L.L".PadRight(16) + [string]$r.amountReceivedLbp) }
+    if (-not $r.amountReceivedUsd -and -not $r.amountReceivedLbp) {
+      Add-EscText $ms ("Received".PadRight(16) + [string]$r.amountReceived)
+    }
     Add-EscText $ms ("Change $".PadRight(16) + [string]$r.changeUsd)
     Add-EscText $ms ("Change L.L".PadRight(16) + [string]$r.changeLbp)
     Add-EscText $ms ("Change in".PadRight(16) + [string]$r.changeIn)
@@ -450,7 +454,8 @@ $doc.add_PrintPage({
     $y += 6
     $payRows = @(
       @{ Label = "Paid in"; Value = $script:receipt.paidIn; Bold = $false },
-      @{ Label = "Amount received"; Value = $script:receipt.amountReceived; Bold = $false },
+      @{ Label = "Received $"; Value = $(if ($script:receipt.amountReceivedUsd) { $script:receipt.amountReceivedUsd } else { $script:receipt.amountReceived }); Bold = $false },
+      @{ Label = "Received L.L"; Value = $(if ($script:receipt.amountReceivedLbp) { $script:receipt.amountReceivedLbp } else { "" }); Bold = $false },
       @{ Label = "Change $"; Value = $script:receipt.changeUsd; Bold = $true },
       @{ Label = "Change L.L"; Value = $script:receipt.changeLbp; Bold = $true },
       @{ Label = "Change given in"; Value = $script:receipt.changeIn; Bold = $false }
@@ -580,7 +585,8 @@ function New-ThermalReceiptBitmap {
     $y += 10
     foreach ($row in @(
       @{ Label = "Paid in"; Value = $script:receipt.paidIn; Bold = $false },
-      @{ Label = "Amount received"; Value = $script:receipt.amountReceived; Bold = $false },
+      @{ Label = "Received $"; Value = $(if ($script:receipt.amountReceivedUsd) { $script:receipt.amountReceivedUsd } else { $script:receipt.amountReceived }); Bold = $false },
+      @{ Label = "Received L.L"; Value = $(if ($script:receipt.amountReceivedLbp) { $script:receipt.amountReceivedLbp } else { "" }); Bold = $false },
       @{ Label = "Change $"; Value = $script:receipt.changeUsd; Bold = $true },
       @{ Label = "Change L.L"; Value = $script:receipt.changeLbp; Bold = $true },
       @{ Label = "Change given in"; Value = $script:receipt.changeIn; Bold = $false }

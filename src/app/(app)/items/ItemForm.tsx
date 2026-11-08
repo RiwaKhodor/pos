@@ -104,9 +104,10 @@ export function ItemForm({
   const [success, setSuccess] = useState("");
   const [scanHint, setScanHint] = useState(
     mode === "create"
-      ? "Type the name and price. Leave the barcode empty for a new item. To add more of an item you already have, type its name or item code here and press Enter."
+      ? "Type the name and price. Put the barcode you want on the item, or leave barcode empty and the system creates one. To add more of an item you already have, type its name or item code and press Enter."
       : ""
   );
+  const [labelCopies, setLabelCopies] = useState("1");
   const [saving, setSaving] = useState(false);
   const [printLabel, setPrintLabel] = useState<{
     name: string;
@@ -375,6 +376,7 @@ export function ItemForm({
           barcode: madeBarcode,
           quantity: arrived,
         });
+        setLabelCopies(String(arrived));
         setSuccess(
           `Added to ${data.product?.name || "the item"}. The barcode stays ${madeBarcode}. Print 1 label, or ${arrived} for the new pieces.`
         );
@@ -404,6 +406,7 @@ export function ItemForm({
           barcode: madeBarcode,
           quantity: arrived,
         });
+        setLabelCopies(String(arrived));
         setSuccess(
           `Item added${data.product.name ? `: ${data.product.name}` : ""}. Barcode ${madeBarcode} is ready. Print 1 label, or ${arrived} for every piece.`
         );
@@ -512,7 +515,7 @@ export function ItemForm({
                     onBarcodeScan((e.target as HTMLInputElement).value);
                   }
                 }}
-                placeholder="Scan or type barcode, then Enter"
+                placeholder="Your barcode, or leave empty to create one"
                 autoComplete="off"
               />
             </div>
@@ -809,7 +812,7 @@ export function ItemForm({
               <>
                 {fullItemForm ? (
                   <div className="desk-form-row">
-                    <label htmlFor="wholesale">Wholesale Price</label>
+                    <label htmlFor="wholesale">Wholesale Price (optional)</label>
                     <input
                       id="wholesale"
                       type="number"
@@ -849,8 +852,9 @@ export function ItemForm({
                   />
                 </div>
                 <p className="mt-1 text-[11px] text-slate-500">
-                  Wholesale sales must be at least the min quantity, and not
-                  more than the max.
+                  Optional item wholesale price is used when POS is set to
+                  Wholesale — item prices. Wholesale — % off receipt uses the
+                  percentages in Preferences on the normal price.
                 </p>
               </>
             ) : null}
@@ -898,28 +902,30 @@ export function ItemForm({
         <div className="mt-3 border border-emerald-400 bg-emerald-50 px-3 py-2 text-sm font-medium text-emerald-800">
           {success}
           {printLabel ? (
-            <>
+            <div className="mt-2 flex flex-wrap items-center gap-2">
+              <label htmlFor="label-copies" className="text-sm">
+                Copies
+              </label>
+              <input
+                id="label-copies"
+                type="number"
+                min="1"
+                max="200"
+                className="w-20"
+                value={labelCopies}
+                onChange={(e) => setLabelCopies(e.target.value)}
+              />
               <button
                 type="button"
-                className="desk-btn ml-3"
+                className="desk-btn"
                 disabled={printingLabel}
-                onClick={() => printStickers(1)}
+                onClick={() => printStickers(Number(labelCopies) || 1)}
               >
-                {printingLabel ? "Printing…" : "Print 1 label"}
+                {printingLabel
+                  ? "Printing…"
+                  : `Print ${Math.min(200, Math.max(1, Math.floor(Number(labelCopies) || 1)))} label${Math.min(200, Math.max(1, Math.floor(Number(labelCopies) || 1))) === 1 ? "" : "s"}`}
               </button>
-              {printLabel.quantity > 1 ? (
-                <button
-                  type="button"
-                  className="desk-btn ml-2"
-                  disabled={printingLabel}
-                  onClick={() => printStickers(printLabel.quantity)}
-                >
-                  {printingLabel
-                    ? "Printing…"
-                    : `Print ${printLabel.quantity} labels`}
-                </button>
-              ) : null}
-            </>
+            </div>
           ) : null}
         </div>
       ) : null}
@@ -945,7 +951,7 @@ export function ItemForm({
             setSuccess("");
             setPrintLabel(null);
             setScanHint(
-              "Type the name and price. Leave the barcode empty for a new item. To add more of an item you already have, type its name or item code here and press Enter."
+              "Type the name and price. Put the barcode you want on the item, or leave barcode empty and the system creates one."
             );
             router.push("/items/new");
             setTimeout(() => nameRef.current?.focus(), 50);

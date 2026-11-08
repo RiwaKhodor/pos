@@ -27,6 +27,8 @@ type SaleForPrint = {
   payCurrency: string | null;
   changeCurrency: string | null;
   amountTendered: unknown;
+  tenderedUsd?: unknown;
+  tenderedLbp?: unknown;
   changeUsd: unknown;
   changeLbp: unknown;
   pricingMode: string;
@@ -41,6 +43,7 @@ type SaleForPrint = {
 };
 
 export const RECEIPT_LOCATION = "Akbiyeh - Main Road";
+export const RECEIPT_PHONE = "81 604 320";
 
 type SettingsForPrint = {
   storeName: string;
@@ -63,14 +66,36 @@ export function buildReceiptPayload(
   const totalUsd = toNum(sale.total);
   const totalLbp = toLbp(totalUsd, rate);
   const payCurrency = (
-    sale.payCurrency === "LBP" ? "LBP" : "USD"
+    sale.payCurrency === "LBP"
+      ? "LBP"
+      : sale.payCurrency === "MIXED"
+        ? "MIXED"
+        : "USD"
   ) as PayCurrency;
   const changeCurrency = (
-    sale.changeCurrency === "LBP" ? "LBP" : "USD"
+    sale.changeCurrency === "LBP"
+      ? "LBP"
+      : sale.changeCurrency === "MIXED"
+        ? "MIXED"
+        : "USD"
   ) as PayCurrency;
   const amountTendered = toNum(sale.amountTendered);
-  const hasTender = amountTendered > 0;
+  const tenderedUsd = toNum(sale.tenderedUsd);
+  const tenderedLbp = toNum(sale.tenderedLbp);
+  const hasTender = amountTendered > 0 || tenderedUsd > 0 || tenderedLbp > 0;
   const pricing = pricingModeLabel(sale.pricingMode);
+  const receivedParts = [
+    tenderedUsd > 0 ? formatUsd(tenderedUsd) : "",
+    tenderedLbp > 0 ? formatLbp(tenderedLbp) : "",
+  ].filter(Boolean);
+  const amountReceived =
+    receivedParts.length > 0
+      ? receivedParts.join(" + ")
+      : hasTender
+        ? payCurrency === "LBP"
+          ? formatLbp(amountTendered)
+          : formatUsd(amountTendered)
+        : "";
 
   return {
     storeName: settings?.storeName || "VANO",
@@ -79,7 +104,7 @@ export function buildReceiptPayload(
       settings?.address && settings.address !== RECEIPT_LOCATION
         ? settings.address
         : "",
-    phone: settings?.phone || "",
+    phone: settings?.phone?.trim() || RECEIPT_PHONE,
     receiptNumber: sale.receiptNumber,
     date: formatDate(sale.createdAt),
     cashier: sale.cashier.name,
@@ -98,11 +123,9 @@ export function buildReceiptPayload(
     totalLbp: formatLbp(totalLbp),
     rate: `1 $ = ${formatRate(rate)} L.L`,
     paidIn: hasTender ? payCurrencyLabel(payCurrency) : "",
-    amountReceived: hasTender
-      ? payCurrency === "LBP"
-        ? formatLbp(amountTendered)
-        : formatUsd(amountTendered)
-      : "",
+    amountReceived,
+    amountReceivedUsd: hasTender && tenderedUsd > 0 ? formatUsd(tenderedUsd) : "",
+    amountReceivedLbp: hasTender && tenderedLbp > 0 ? formatLbp(tenderedLbp) : "",
     changeUsd: hasTender ? formatUsd(sale.changeUsd) : "",
     changeLbp: hasTender ? formatLbp(sale.changeLbp) : "",
     changeIn: hasTender ? payCurrencyLabel(changeCurrency) : "",

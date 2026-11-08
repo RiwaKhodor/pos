@@ -33,7 +33,7 @@ async function main() {
 
   await prisma.storeSettings.upsert({
     where: { id: "default" },
-    update: { storeName: "VANO", usdToLbpRate: 89500 },
+    update: { storeName: "VANO", usdToLbpRate: 89500, phone: "81 604 320" },
     create: {
       id: "default",
       storeName: "VANO",
@@ -41,7 +41,7 @@ async function main() {
       usdToLbpRate: 89500,
       taxRate: 0,
       address: "Akbiyeh - Main Road",
-      phone: "555-0100",
+      phone: "81 604 320",
       receiptFooter: "Thank you for your purchase!",
     },
   });

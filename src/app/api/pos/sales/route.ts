@@ -5,7 +5,7 @@ import { jsonMoney } from "@/lib/money";
 import { completeSaleLocally } from "@/lib/offline-sale";
 import { showPriceOnDisplay } from "@/lib/price-display";
 import { syncPendingSales } from "@/lib/sync-sales";
-import { formatUsd, type PayCurrency } from "@/lib/fx";
+import { formatUsd, parsePayCurrency } from "@/lib/fx";
 import { notifyOwners } from "@/lib/push";
 import { normalizePricingMode } from "@/lib/price-tiers";
 
@@ -21,13 +21,17 @@ export async function POST(request: Request) {
     const items = (body.items || []) as CartItem[];
     const paymentMethodId = String(body.paymentMethodId || "");
     const pricingMode = normalizePricingMode(body.pricingMode);
-    const payCurrency: PayCurrency =
-      String(body.payCurrency || "USD").toUpperCase() === "LBP" ? "LBP" : "USD";
-    const changeCurrency: PayCurrency =
-      String(body.changeCurrency || payCurrency).toUpperCase() === "LBP"
-        ? "LBP"
-        : "USD";
+    const payCurrency = parsePayCurrency(body.payCurrency);
+    const changeCurrency = parsePayCurrency(body.changeCurrency, payCurrency);
     const amountTendered = Number(body.amountTendered);
+    const tenderedUsd =
+      body.tenderedUsd == null ? undefined : Number(body.tenderedUsd);
+    const tenderedLbp =
+      body.tenderedLbp == null ? undefined : Number(body.tenderedLbp);
+    const givenChangeUsd =
+      body.changeUsd == null ? null : Number(body.changeUsd);
+    const givenChangeLbp =
+      body.changeLbp == null ? null : Number(body.changeLbp);
 
     if (!Array.isArray(items) || items.length === 0) {
       return Response.json({ error: "Cart cannot be empty" }, { status: 400 });
@@ -46,6 +50,10 @@ export async function POST(request: Request) {
       payCurrency,
       changeCurrency,
       amountTendered,
+      tenderedUsd,
+      tenderedLbp,
+      givenChangeUsd,
+      givenChangeLbp,
       discount: Number(body.discount ?? 0),
       cashierId: user.id,
       cashierName: user.name,

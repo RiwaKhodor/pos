@@ -6,6 +6,7 @@ import { jsonMoney } from "@/lib/money";
 import { invalidateStoreNameCache } from "@/lib/store";
 import { setStoreNameCookie } from "@/lib/store-cookie";
 import { DEFAULT_USD_TO_LBP } from "@/lib/fx";
+import { RECEIPT_PHONE } from "@/lib/receipt-print";
 import { readCachedSettings, writeCachedSettings } from "@/lib/catalog-cache";
 import { isDbUnavailable } from "@/lib/db-unavailable";
 import { queueOp, dropOp } from "@/lib/offline-ops";
@@ -65,7 +66,7 @@ export async function PUT(request: Request) {
       usdToLbpRate,
       taxRate: Number(body.taxRate ?? 0),
       address: body.address ? String(body.address) : null,
-      phone: body.phone ? String(body.phone) : null,
+      phone: body.phone ? String(body.phone).trim() : RECEIPT_PHONE,
       receiptFooter: body.receiptFooter ? String(body.receiptFooter) : null,
       ...discounts,
     };

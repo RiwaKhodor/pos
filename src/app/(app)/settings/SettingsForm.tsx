@@ -3,11 +3,13 @@
 import { FormEvent, useState } from "react";
 import { useRouter } from "next/navigation";
 import { DEFAULT_USD_TO_LBP, formatRate } from "@/lib/fx";
+import { RECEIPT_PHONE } from "@/lib/receipt-print";
 
 type Settings = {
   storeName: string;
   usdToLbpRate: number;
   taxRate: number;
+  phone: string | null;
   receiptFooter: string | null;
   discAbove500: number;
   discAbove1000: number;
@@ -23,6 +25,7 @@ export function SettingsForm({ settings }: { settings: Settings }) {
     storeName: settings.storeName,
     usdToLbpRate: String(settings.usdToLbpRate || DEFAULT_USD_TO_LBP),
     taxRate: String(settings.taxRate),
+    phone: settings.phone || RECEIPT_PHONE,
     receiptFooter: settings.receiptFooter || "",
     discAbove500: String(settings.discAbove500 || ""),
     discAbove1000: String(settings.discAbove1000 || ""),
@@ -45,6 +48,7 @@ export function SettingsForm({ settings }: { settings: Settings }) {
         storeName: form.storeName,
         usdToLbpRate: Number(form.usdToLbpRate || DEFAULT_USD_TO_LBP),
         taxRate: Number(form.taxRate || 0),
+        phone: form.phone.trim() || RECEIPT_PHONE,
         receiptFooter: form.receiptFooter || null,
         discAbove500: Number(form.discAbove500 || 0),
         discAbove1000: Number(form.discAbove1000 || 0),
@@ -53,7 +57,6 @@ export function SettingsForm({ settings }: { settings: Settings }) {
         discAbove7000: Number(form.discAbove7000 || 0),
         discAbove10000: Number(form.discAbove10000 || 0),
         address: null,
-        phone: null,
       }),
     });
     const data = await res.json();
@@ -133,12 +136,22 @@ export function SettingsForm({ settings }: { settings: Settings }) {
           </p>
         </div>
 
+        <div className="desk-form-row">
+          <label htmlFor="phone">Receipt phone</label>
+          <input
+            id="phone"
+            value={form.phone}
+            onChange={(e) => setForm({ ...form, phone: e.target.value })}
+            placeholder={RECEIPT_PHONE}
+          />
+        </div>
+
         <fieldset className="desk-fieldset">
-          <legend>Receipt total discount</legend>
+          <legend>Wholesale receipt discount</legend>
           <p className="mb-2 text-[11px] text-slate-500">
-            When the receipt total, at normal prices, reaches an amount, that
-            percent comes off the receipt. The register selects it automatically.
-            You can change it at payment.
+            Used when POS is set to Wholesale — % off receipt. The percent comes
+            off the normal prices when the receipt reaches that amount. You can
+            also sell wholesale with an optional item wholesale price instead.
           </p>
           {(
             [

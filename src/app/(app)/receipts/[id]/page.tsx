@@ -13,7 +13,7 @@ import { readLocalSale } from "@/lib/offline-sale";
 import { isOwnerWeb } from "@/lib/host";
 import { PageHeader, Panel } from "@/components/ui";
 import { PrintButton } from "./PrintButton";
-import { RECEIPT_LOCATION } from "@/lib/receipt-print";
+import { RECEIPT_LOCATION, RECEIPT_PHONE } from "@/lib/receipt-print";
 import {
   DEFAULT_USD_TO_LBP,
   formatLbp,
@@ -43,6 +43,8 @@ export default async function ReceiptPage({ params }: Params) {
     payCurrency: string | null;
     changeCurrency: string | null;
     amountTendered: unknown;
+    tenderedUsd?: unknown;
+    tenderedLbp?: unknown;
     changeUsd: unknown;
     changeLbp: unknown;
     pricingMode: string;
@@ -109,14 +111,27 @@ export default async function ReceiptPage({ params }: Params) {
   const rate = toNum(sale.exchangeRate) || DEFAULT_USD_TO_LBP;
   const totalUsd = toNum(sale.total);
   const totalLbp = toLbp(totalUsd, rate);
-  const payCurrency = (sale.payCurrency === "LBP" ? "LBP" : "USD") as PayCurrency;
+  const payCurrency = (
+    sale.payCurrency === "LBP"
+      ? "LBP"
+      : sale.payCurrency === "MIXED"
+        ? "MIXED"
+        : "USD"
+  ) as PayCurrency;
   const changeCurrency = (
-    sale.changeCurrency === "LBP" ? "LBP" : "USD"
+    sale.changeCurrency === "LBP"
+      ? "LBP"
+      : sale.changeCurrency === "MIXED"
+        ? "MIXED"
+        : "USD"
   ) as PayCurrency;
   const amountTendered = toNum(sale.amountTendered);
+  const tenderedUsd = toNum(sale.tenderedUsd);
+  const tenderedLbp = toNum(sale.tenderedLbp);
   const changeUsd = toNum(sale.changeUsd);
   const changeLbp = toNum(sale.changeLbp);
-  const hasTender = amountTendered > 0;
+  const hasTender = amountTendered > 0 || tenderedUsd > 0 || tenderedLbp > 0;
+  const phone = settings?.phone?.trim() || RECEIPT_PHONE;
 
   return (
     <div className="receipt-page">
@@ -153,9 +168,7 @@ export default async function ReceiptPage({ params }: Params) {
           {settings?.address && settings.address !== RECEIPT_LOCATION ? (
             <div className="text-sm text-slate-500">{settings.address}</div>
           ) : null}
-          {settings?.phone ? (
-            <div className="text-sm text-slate-500">{settings.phone}</div>
-          ) : null}
+          <div className="text-sm text-slate-500">{phone}</div>
         </div>
 
         <div className="mt-4 space-y-1 text-sm text-slate-600">
@@ -230,14 +243,31 @@ export default async function ReceiptPage({ params }: Params) {
               <span>Paid in</span>
               <span>{payCurrencyLabel(payCurrency)}</span>
             </div>
-            <div className="flex justify-between">
-              <span>Amount received</span>
-              <span>
-                {payCurrency === "LBP"
-                  ? formatLbp(amountTendered)
-                  : formatUsd(amountTendered)}
-              </span>
-            </div>
+            {tenderedUsd > 0 || tenderedLbp > 0 ? (
+              <>
+                {tenderedUsd > 0 ? (
+                  <div className="flex justify-between">
+                    <span>Received $</span>
+                    <span>{formatUsd(tenderedUsd)}</span>
+                  </div>
+                ) : null}
+                {tenderedLbp > 0 ? (
+                  <div className="flex justify-between">
+                    <span>Received L.L</span>
+                    <span>{formatLbp(tenderedLbp)}</span>
+                  </div>
+                ) : null}
+              </>
+            ) : (
+              <div className="flex justify-between">
+                <span>Amount received</span>
+                <span>
+                  {payCurrency === "LBP"
+                    ? formatLbp(amountTendered)
+                    : formatUsd(amountTendered)}
+                </span>
+              </div>
+            )}
             <div className="flex justify-between font-semibold">
               <span>Change $</span>
               <span>{formatUsd(changeUsd)}</span>

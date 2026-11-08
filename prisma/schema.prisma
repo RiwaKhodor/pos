@@ -105,12 +105,14 @@ model Sale {
   tax             Decimal       @default(0) @db.Decimal(12, 2)
   total           Decimal       @db.Decimal(12, 2)
   pricingMode     String        @default("REGULAR") // REGULAR | WHOLESALE
-  payCurrency     String        @default("USD") // USD | LBP
+  payCurrency     String        @default("USD") // USD | LBP | MIXED
   exchangeRate    Decimal       @default(89500) @db.Decimal(12, 4) // 1 USD = this many L.L
-  amountTendered  Decimal       @default(0) @db.Decimal(14, 2) // in payCurrency
+  amountTendered  Decimal       @default(0) @db.Decimal(14, 2) // USD equivalent received
+  tenderedUsd     Decimal       @default(0) @db.Decimal(12, 2)
+  tenderedLbp     Decimal       @default(0) @db.Decimal(14, 2)
   changeUsd       Decimal       @default(0) @db.Decimal(12, 2)
   changeLbp       Decimal       @default(0) @db.Decimal(14, 2)
-  changeCurrency  String        @default("USD") // USD | LBP — currency change was given in
+  changeCurrency  String        @default("USD") // USD | LBP | MIXED
   cashierId       String
   cashier         User          @relation(fields: [cashierId], references: [id])
   customerId      String?

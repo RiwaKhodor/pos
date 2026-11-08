@@ -26,6 +26,7 @@ export const getCachedStoreSettings = unstable_cache(
       storeName: settings.storeName,
       usdToLbpRate: toNum(settings.usdToLbpRate) || DEFAULT_USD_TO_LBP,
       taxRate: toNum(settings.taxRate),
+      phone: settings.phone,
       receiptFooter: settings.receiptFooter,
       discAbove500: toNum(settings.discAbove500),
       discAbove1000: toNum(settings.discAbove1000),

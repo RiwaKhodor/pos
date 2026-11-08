@@ -102,6 +102,8 @@ async function uploadSale(payload: LocalSalePayload) {
           payCurrency: payload.payCurrency,
           exchangeRate: payload.exchangeRate,
           amountTendered: payload.amountTendered,
+          tenderedUsd: payload.tenderedUsd || 0,
+          tenderedLbp: payload.tenderedLbp || 0,
           changeUsd: payload.changeUsd,
           changeLbp: payload.changeLbp,
           changeCurrency: payload.changeCurrency,

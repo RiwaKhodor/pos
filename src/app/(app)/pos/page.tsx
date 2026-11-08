@@ -14,21 +14,21 @@ import { StoreLogo } from "@/components/StoreLogo";
 import { UpdateNotice } from "@/components/UpdateNotice";
 import { wholesaleQtyError, clampWholesaleQty } from "@/lib/wholesale";
 import {
-  computeTenderChange,
+  computeMixedTender,
   DEFAULT_USD_TO_LBP,
   formatLbp,
   formatRate,
   formatUsd,
+  tenderPayCurrency,
   toLbp,
-  type PayCurrency,
 } from "@/lib/fx";
 import {
   discountForLines,
   parseMaxDiscount,
   pricingModeLabel,
-  suggestPriceMode,
   tierPercent,
   unitPriceFor,
+  volumePercentForAmount,
   VOLUME_TIERS,
   type PricingMode,
   type TierPercents,
@@ -130,9 +130,11 @@ export default function PosPage() {
   const [lastReceiptId, setLastReceiptId] = useState<string | null>(null);
   const [showProducts, setShowProducts] = useState(false);
   const [showPayment, setShowPayment] = useState(false);
-  const [payCurrency, setPayCurrency] = useState<PayCurrency>("USD");
-  const [changeCurrency, setChangeCurrency] = useState<PayCurrency>("USD");
-  const [tendered, setTendered] = useState("");
+  const [tenderedUsd, setTenderedUsd] = useState("");
+  const [tenderedLbp, setTenderedLbp] = useState("");
+  const [changeUsdInput, setChangeUsdInput] = useState("");
+  const [changeLbpInput, setChangeLbpInput] = useState("");
+  const [changeEdited, setChangeEdited] = useState<"usd" | "lbp" | null>(null);
   const [stockAlert, setStockAlert] = useState<{
     name: string;
     wanted: number;
@@ -245,16 +247,6 @@ export default function PosPage() {
       ),
     [cart]
   );
-  const suggestedMode = useMemo(
-    () => suggestPriceMode(regularSubtotal, tierPercents),
-    [regularSubtotal, tierPercents]
-  );
-
-  useEffect(() => {
-    if (pricingLocked && isOwner) return;
-    setPricingMode(suggestedMode);
-  }, [suggestedMode, pricingLocked, isOwner]);
-
   useEffect(() => {
     if (cart.length === 0) setPricingLocked(false);
   }, [cart.length]);
@@ -267,7 +259,10 @@ export default function PosPage() {
     let discount = 0;
     let discountPercent = 0;
     let capped = false;
-    const tierPct = tierPercent(pricingMode, tierPercents);
+    const tierPct =
+      pricingMode === "WHOLESALE_PCT"
+        ? volumePercentForAmount(rounded, tierPercents)
+        : tierPercent(pricingMode, tierPercents);
     if (tierPct > 0) {
       const lines = cart.map((line) => ({
         amount: unitPriceFor(pricingMode, line) * line.quantity,
@@ -310,12 +305,22 @@ export default function PosPage() {
     return () => clearTimeout(timer);
   }, [total, cart.length]);
   const totalLbp = toLbp(total, usdToLbpRate);
-  const tenderPreview = computeTenderChange({
+  const tenderPreview = computeMixedTender({
     totalUsd: total,
     rate: usdToLbpRate,
-    payCurrency,
-    tendered: Number(tendered) || 0,
+    tenderedUsd: Number(tenderedUsd) || 0,
+    tenderedLbp: Number(tenderedLbp) || 0,
+    changeUsd: changeEdited === "usd" ? Number(changeUsdInput) : null,
+    changeLbp: changeEdited === "lbp" ? Number(changeLbpInput) : null,
   });
+  const payCurrency = tenderPayCurrency(
+    tenderPreview.tenderedUsd,
+    tenderPreview.tenderedLbp
+  );
+  const changeCurrency = tenderPayCurrency(
+    tenderPreview.changeUsd,
+    tenderPreview.changeLbp
+  );
 
   const addProduct = useCallback((product: Product, qty = 1) => {
     const wsPrice = product.wholesalePrice || 0;
@@ -616,11 +621,13 @@ export default function PosPage() {
         }
       }
     }
-    setPayCurrency("USD");
-    setChangeCurrency("USD");
-    setTendered(total.toFixed(2));
+    setTenderedUsd(total.toFixed(2));
+    setTenderedLbp("0");
+    setChangeUsdInput("0");
+    setChangeLbpInput("0");
+    setChangeEdited(null);
     setShowPayment(true);
-    setStatus("Select payment currency and complete the sale.");
+    setStatus("Enter dollars and L.L received, then how to give change.");
   }
 
   function choosePricing(mode: PricingMode) {
@@ -660,7 +667,11 @@ export default function PosPage() {
         pricingMode,
         payCurrency,
         changeCurrency,
-        amountTendered: Number(tendered),
+        amountTendered: tenderPreview.paidUsd,
+        tenderedUsd: tenderPreview.tenderedUsd,
+        tenderedLbp: tenderPreview.tenderedLbp,
+        changeUsd: tenderPreview.changeUsd,
+        changeLbp: tenderPreview.changeLbp,
         discount: isOwner ? pricing.discount : 0,
       }),
     });
@@ -695,7 +706,9 @@ export default function PosPage() {
     setCart([]);
     setSelectedId(null);
     setDiscountInput("");
-    setTendered("");
+    setTenderedUsd("");
+    setTenderedLbp("");
+    setChangeEdited(null);
     setStatus(`Sale complete. Receipt ${data.sale.receiptNumber || ""}.`);
     router.push(`/receipts/${data.sale.id}?print=1`);
   }
@@ -777,24 +790,28 @@ export default function PosPage() {
           <label>Cashier Name</label>
           <div className="pos-box">{session?.name || "…"}</div>
         </div>
-        <div className="pos-field pos-hide-sm">
+        <div className="pos-field">
           <label>Price Type</label>
           <select
             className="pos-box"
             value={pricingMode}
-            disabled={!isOwner}
             onChange={(e) => choosePricing(e.target.value as PricingMode)}
             style={{ fontWeight: 600 }}
           >
             <option value="REGULAR">Regular</option>
-            <option value="WHOLESALE">Wholesale</option>
-            <option value="ONLINE">Online</option>
-            <option value="RETAIL">Retail</option>
-            {VOLUME_TIERS.map((tier) => (
-              <option key={tier.mode} value={tier.mode}>
-                {pricingModeLabel(tier.mode, tierPercents)}
-              </option>
-            ))}
+            <option value="WHOLESALE">Wholesale — item prices</option>
+            <option value="WHOLESALE_PCT">Wholesale — % off receipt</option>
+            {isOwner ? (
+              <>
+                <option value="ONLINE">Online</option>
+                <option value="RETAIL">Retail</option>
+                {VOLUME_TIERS.map((tier) => (
+                  <option key={tier.mode} value={tier.mode}>
+                    {pricingModeLabel(tier.mode, tierPercents)}
+                  </option>
+                ))}
+              </>
+            ) : null}
           </select>
         </div>
         <div className="pos-field">
@@ -1067,15 +1084,10 @@ export default function PosPage() {
                     max="100"
                     step="0.01"
                     value={discountInput}
-                    disabled={tierPercent(pricingMode, tierPercents) > 0}
+                    disabled={pricingMode === "WHOLESALE_PCT" || tierPercent(pricingMode, tierPercents) > 0}
                     onChange={(e) => setDiscountInput(e.target.value)}
                     placeholder="0"
                   />
-                  {pricing.discount > 0 && tierPercent(pricingMode, tierPercents) === 0 ? (
-                    <div className="mt-1 text-[11px] text-slate-600">
-                      {pricing.discountPercent}% off = -{formatUsd(pricing.discount)}
-                    </div>
-                  ) : null}
                 </div>
               ) : null}
               <div className="pos-field">
@@ -1083,26 +1095,28 @@ export default function PosPage() {
                 <select
                   id="pricing-mode"
                   value={pricingMode}
-                  disabled={!isOwner}
                   onChange={(e) => choosePricing(e.target.value as PricingMode)}
                 >
                   <option value="REGULAR">Regular (normal price)</option>
-                  <option value="WHOLESALE">Wholesale</option>
-                  <option value="ONLINE">Online</option>
-                  <option value="RETAIL">Retail</option>
-                  {VOLUME_TIERS.map((tier) => (
-                    <option key={tier.mode} value={tier.mode}>
-                      {pricingModeLabel(tier.mode, tierPercents)}
-                    </option>
-                  ))}
+                  <option value="WHOLESALE">Wholesale — item prices</option>
+                  <option value="WHOLESALE_PCT">Wholesale — % off receipt</option>
+                  {isOwner ? (
+                    <>
+                      <option value="ONLINE">Online</option>
+                      <option value="RETAIL">Retail</option>
+                      {VOLUME_TIERS.map((tier) => (
+                        <option key={tier.mode} value={tier.mode}>
+                          {pricingModeLabel(tier.mode, tierPercents)}
+                        </option>
+                      ))}
+                    </>
+                  ) : null}
                 </select>
                 {pricing.discount > 0 ? (
                   <div className="mt-1 text-[11px] text-slate-600">
                     {pricingModeLabel(pricingMode, tierPercents)}
                     {pricing.capped ? " (some items are capped)" : ""}:{" "}
-                    {pricing.capped
-                      ? `-${formatUsd(pricing.discount)}`
-                      : `${pricing.discountPercent}% off = -${formatUsd(pricing.discount)}`}
+                    {`${pricing.discountPercent}% off = -${formatUsd(pricing.discount)}`}
                   </div>
                 ) : null}
               </div>
@@ -1121,69 +1135,77 @@ export default function PosPage() {
                   ))}
                 </select>
               </div>
-              <div className="pos-field">
-                <label htmlFor="pay-currency">Customer pays in</label>
-                <select
-                  id="pay-currency"
-                  value={payCurrency}
-                  onChange={(e) => {
-                    const next = e.target.value as PayCurrency;
-                    setPayCurrency(next);
-                    setTendered(
-                      next === "USD"
-                        ? total.toFixed(2)
-                        : String(Math.round(totalLbp))
-                    );
-                  }}
-                >
-                  <option value="USD">Dollars ($)</option>
-                  <option value="LBP">Lebanese Lira (L.L)</option>
-                </select>
-              </div>
-              <div className="pos-field">
-                <label htmlFor="tendered">
-                  Amount received ({payCurrency === "LBP" ? "L.L" : "$"})
-                  {payCurrency === "LBP" && tendered
-                    ? ` — ${formatLbp(Number(tendered) || 0)}`
-                    : ""}
-                </label>
-                <input
-                  id="tendered"
-                  type="number"
-                  step={payCurrency === "LBP" ? "1" : "0.01"}
-                  min="0"
-                  required
-                  value={tendered}
-                  onChange={(e) => setTendered(e.target.value)}
-                />
-              </div>
-              <div className="border border-[#aaa] bg-white px-3 py-2 text-sm">
-                <div className="mb-1 font-bold">Change</div>
-                <div className="flex justify-between">
-                  <span>Dollars</span>
-                  <span className="font-mono font-semibold">
-                    {formatUsd(tenderPreview.changeUsd)}
-                  </span>
+              <div className="grid grid-cols-2 gap-2">
+                <div className="pos-field">
+                  <label htmlFor="tendered-usd">Received $</label>
+                  <input
+                    id="tendered-usd"
+                    type="number"
+                    step="0.01"
+                    min="0"
+                    value={tenderedUsd}
+                    onChange={(e) => {
+                      setTenderedUsd(e.target.value);
+                      setChangeEdited(null);
+                    }}
+                  />
                 </div>
-                <div className="flex justify-between">
-                  <span>L.L</span>
-                  <span className="font-mono font-semibold">
-                    {formatLbp(tenderPreview.changeLbp)}
-                  </span>
+                <div className="pos-field">
+                  <label htmlFor="tendered-lbp">Received L.L</label>
+                  <input
+                    id="tendered-lbp"
+                    type="number"
+                    step="1"
+                    min="0"
+                    value={tenderedLbp}
+                    onChange={(e) => {
+                      setTenderedLbp(e.target.value);
+                      setChangeEdited(null);
+                    }}
+                  />
                 </div>
               </div>
-              <div className="pos-field">
-                <label htmlFor="change-currency">Give change in</label>
-                <select
-                  id="change-currency"
-                  value={changeCurrency}
-                  onChange={(e) =>
-                    setChangeCurrency(e.target.value as PayCurrency)
-                  }
-                >
-                  <option value="USD">Dollars ($)</option>
-                  <option value="LBP">Lebanese Lira (L.L)</option>
-                </select>
+              <div className="text-[11px] text-slate-600">
+                Paid {formatUsd(tenderPreview.paidUsd)} of {formatUsd(tenderPreview.dueUsd)}.
+                Change due {formatUsd(tenderPreview.changeDueUsd)}.
+              </div>
+              <div className="grid grid-cols-2 gap-2">
+                <div className="pos-field">
+                  <label htmlFor="change-usd">Change $</label>
+                  <input
+                    id="change-usd"
+                    type="number"
+                    step="0.01"
+                    min="0"
+                    value={
+                      changeEdited === "usd"
+                        ? changeUsdInput
+                        : tenderPreview.changeUsd.toFixed(2)
+                    }
+                    onChange={(e) => {
+                      setChangeEdited("usd");
+                      setChangeUsdInput(e.target.value);
+                    }}
+                  />
+                </div>
+                <div className="pos-field">
+                  <label htmlFor="change-lbp">Change L.L</label>
+                  <input
+                    id="change-lbp"
+                    type="number"
+                    step="1"
+                    min="0"
+                    value={
+                      changeEdited === "lbp"
+                        ? changeLbpInput
+                        : String(Math.round(tenderPreview.changeLbp))
+                    }
+                    onChange={(e) => {
+                      setChangeEdited("lbp");
+                      setChangeLbpInput(e.target.value);
+                    }}
+                  />
+                </div>
               </div>
               {error ? (
                 <div className="border border-red-300 bg-red-50 px-3 py-2 text-sm text-red-700">
@@ -1201,12 +1223,7 @@ export default function PosPage() {
                 <button
                   type="submit"
                   className="pos-btn"
-                  disabled={
-                    loading ||
-                    (payCurrency === "USD"
-                      ? (Number(tendered) || 0) + 0.001 < tenderPreview.dueUsd
-                      : (Number(tendered) || 0) + 0.001 < tenderPreview.dueLbp)
-                  }
+                  disabled={loading || !tenderPreview.enough}
                 >
                   {loading ? "Processing..." : "Complete Sale"}
                 </button>

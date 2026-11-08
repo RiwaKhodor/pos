@@ -10,8 +10,14 @@ export function UpdateNotice() {
   useEffect(() => {
     const api = window.vanoUpdate;
     if (!api) return;
-    void api.getState().then(setState);
-    return api.onChange(setState);
+    void api.getState().then((next) => {
+      setState(next);
+      if (next.status === "ready" || next.status === "downloading") setOpen(true);
+    });
+    return api.onChange((next) => {
+      setState(next);
+      if (next.status === "ready" || next.status === "downloading") setOpen(true);
+    });
   }, []);
 
   if (!state) return null;
@@ -21,6 +27,17 @@ export function UpdateNotice() {
 
   return (
     <div className="update-notice" onClick={(event) => event.stopPropagation()}>
+      {pending ? (
+        <button
+          type="button"
+          className="update-notice-banner"
+          onClick={() => setOpen(true)}
+        >
+          {state.status === "downloading"
+            ? `${versionLabel} is downloading`
+            : `${versionLabel} — tap Update`}
+        </button>
+      ) : null}
       <button
         type="button"
         className="update-notice-btn"

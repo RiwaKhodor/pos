@@ -1,10 +1,12 @@
 import { randomUUID } from "crypto";
 import { wholesaleQtyError } from "@/lib/wholesale";
 import {
-  computeTenderChange,
+  computeMixedTender,
   DEFAULT_USD_TO_LBP,
+  tenderPayCurrency,
   type PayCurrency,
 } from "@/lib/fx";
+import { RECEIPT_PHONE } from "@/lib/receipt-print";
 import { localDb, readSnapshot, registerId, writeSnapshot } from "@/lib/local-db";
 import {
   readCachedSettings,
@@ -19,6 +21,7 @@ import {
   percentsFromSettings,
   tierPercent,
   unitPriceFor,
+  volumePercentForAmount,
   type PricingMode,
 } from "@/lib/price-tiers";
 
@@ -52,6 +55,8 @@ export type LocalSalePayload = {
   payCurrency: PayCurrency;
   exchangeRate: number;
   amountTendered: number;
+  tenderedUsd: number;
+  tenderedLbp: number;
   changeUsd: number;
   changeLbp: number;
   changeCurrency: PayCurrency;
@@ -124,6 +129,10 @@ export function completeSaleLocally(input: {
   payCurrency: PayCurrency;
   changeCurrency: PayCurrency;
   amountTendered: number;
+  tenderedUsd?: number;
+  tenderedLbp?: number;
+  givenChangeUsd?: number | null;
+  givenChangeLbp?: number | null;
   discount: number;
   cashierId: string;
   cashierName: string;
@@ -190,10 +199,11 @@ export function completeSaleLocally(input: {
     }
 
     subtotal = Number(subtotal.toFixed(2));
-    const tierPct = tierPercent(
-      input.pricingMode,
-      percentsFromSettings(settings)
-    );
+    const percents = percentsFromSettings(settings);
+    const tierPct =
+      input.pricingMode === "WHOLESALE_PCT"
+        ? volumePercentForAmount(subtotal, percents)
+        : tierPercent(input.pricingMode, percents);
     let discount = 0;
     if (tierPct > 0) {
       discount = discountForLines(
@@ -212,21 +222,41 @@ export function completeSaleLocally(input: {
     const taxable = Number((subtotal - discount).toFixed(2));
     const tax = Number(((taxable * taxRate) / 100).toFixed(2));
     const total = Number((taxable + tax).toFixed(2));
-    if (!Number.isFinite(input.amountTendered) || input.amountTendered < 0) {
+    const splitGiven =
+      input.tenderedUsd != null || input.tenderedLbp != null;
+    let tenderedUsd = Number(input.tenderedUsd || 0);
+    let tenderedLbp = Number(input.tenderedLbp || 0);
+    if (!splitGiven) {
+      if (!Number.isFinite(input.amountTendered) || input.amountTendered < 0) {
+        throw new Error("INVALID_TENDER");
+      }
+      if (input.payCurrency === "LBP") {
+        tenderedLbp = input.amountTendered;
+        tenderedUsd = 0;
+      } else {
+        tenderedUsd = input.amountTendered;
+        tenderedLbp = 0;
+      }
+    }
+    if (
+      !Number.isFinite(tenderedUsd) ||
+      tenderedUsd < 0 ||
+      !Number.isFinite(tenderedLbp) ||
+      tenderedLbp < 0
+    ) {
       throw new Error("INVALID_TENDER");
     }
-    const tender = computeTenderChange({
+    const mixed = computeMixedTender({
       totalUsd: total,
       rate: exchangeRate,
-      payCurrency: input.payCurrency,
-      tendered: input.amountTendered,
+      tenderedUsd,
+      tenderedLbp,
+      changeUsd: input.givenChangeUsd,
+      changeLbp: input.givenChangeLbp,
     });
-    if (input.payCurrency === "USD" && tender.tendered + 0.001 < tender.dueUsd) {
-      throw new Error("INSUFFICIENT_TENDER");
-    }
-    if (input.payCurrency === "LBP" && tender.tendered + 0.001 < tender.dueLbp) {
-      throw new Error("INSUFFICIENT_TENDER");
-    }
+    if (!mixed.enough) throw new Error("INSUFFICIENT_TENDER");
+    const payCurrency = tenderPayCurrency(mixed.tenderedUsd, mixed.tenderedLbp);
+    const changeCurrency = tenderPayCurrency(mixed.changeUsd, mixed.changeLbp);
 
     const short = registerId().replace(/-/g, "").slice(0, 4).toUpperCase();
     const stamp = Date.now().toString(36).toUpperCase();
@@ -241,12 +271,14 @@ export function completeSaleLocally(input: {
       tax,
       total,
       pricingMode: input.pricingMode,
-      payCurrency: input.payCurrency,
-      exchangeRate: tender.rate,
-      amountTendered: tender.tendered,
-      changeUsd: tender.changeUsd,
-      changeLbp: tender.changeLbp,
-      changeCurrency: input.changeCurrency,
+      payCurrency,
+      exchangeRate: mixed.rate,
+      amountTendered: mixed.paidUsd,
+      tenderedUsd: mixed.tenderedUsd,
+      tenderedLbp: mixed.tenderedLbp,
+      changeUsd: mixed.changeUsd,
+      changeLbp: mixed.changeLbp,
+      changeCurrency,
       cashierId: input.cashierId,
       cashierName: input.cashierName,
       paymentMethodId: method.id,
@@ -254,7 +286,7 @@ export function completeSaleLocally(input: {
       createdAt: new Date().toISOString(),
       storeName: settings.storeName,
       address: settings.address,
-      phone: settings.phone,
+      phone: settings.phone || RECEIPT_PHONE,
       receiptFooter: settings.receiptFooter,
       items: lineItems,
     };

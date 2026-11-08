@@ -11,6 +11,7 @@ export type VolumeMode = (typeof VOLUME_TIERS)[number]["mode"];
 export type PricingMode =
   | "REGULAR"
   | "WHOLESALE"
+  | "WHOLESALE_PCT"
   | "ONLINE"
   | "RETAIL"
   | VolumeMode;
@@ -39,6 +40,7 @@ export function normalizePricingMode(value: unknown): PricingMode {
   const mode = String(value || "REGULAR").toUpperCase();
   if (
     mode === "WHOLESALE" ||
+    mode === "WHOLESALE_PCT" ||
     mode === "ONLINE" ||
     mode === "RETAIL" ||
     VOLUME_TIERS.some((tier) => tier.mode === mode)
@@ -117,8 +119,13 @@ export function unitPriceFor(
   return prices.price;
 }
 
+export function volumePercentForAmount(subtotal: number, percents: TierPercents) {
+  return tierPercent(suggestPriceMode(subtotal, percents), percents);
+}
+
 export function pricingModeLabel(mode: string, percents?: TierPercents) {
-  if (mode === "WHOLESALE") return "Wholesale";
+  if (mode === "WHOLESALE") return "Wholesale (item prices)";
+  if (mode === "WHOLESALE_PCT") return "Wholesale (% off receipt)";
   if (mode === "ONLINE") return "Online";
   if (mode === "RETAIL") return "Retail";
   const tier = VOLUME_TIERS.find((row) => row.mode === mode);
