@@ -18,19 +18,6 @@ async function main() {
     },
   });
 
-  const employeeHash = await bcrypt.hash("employee123", 10);
-  await prisma.user.upsert({
-    where: { email: "cashier@store.com" },
-    update: {},
-    create: {
-      name: "Demo Cashier",
-      email: "cashier@store.com",
-      passwordHash: employeeHash,
-      role: "EMPLOYEE",
-      active: true,
-    },
-  });
-
   await prisma.storeSettings.upsert({
     where: { id: "default" },
     update: { storeName: "VANO", usdToLbpRate: 89500, phone: "81 604 320" },

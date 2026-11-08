@@ -798,6 +798,12 @@ export function ItemForm({
 
           <fieldset className="desk-fieldset">
             <legend>Wholesale</legend>
+            <p className="mb-2 text-[11px] text-slate-500">
+              Most items leave this off. Wholesale for a mixed cart is the %
+              in Preferences, with Max discount % as a cap. Fill a wholesale
+              price only if this item is always a set wholesale amount, not
+              the receipt %.
+            </p>
             <label className="mb-2 flex items-center gap-2 text-xs">
               <input
                 type="checkbox"
@@ -852,9 +858,9 @@ export function ItemForm({
                   />
                 </div>
                 <p className="mt-1 text-[11px] text-slate-500">
-                  Optional item wholesale price is used when POS is set to
-                  Wholesale — item prices. Wholesale — % off receipt uses the
-                  percentages in Preferences on the normal price.
+                  In POS the cashier selects this line and presses Fixed WS
+                  Price. That line uses the wholesale price and skips the
+                  receipt %. Min/max quantity apply only then.
                 </p>
               </>
             ) : null}

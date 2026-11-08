@@ -123,7 +123,7 @@ function takeFromLots(product: CachedProduct, quantity: number) {
 }
 
 export function completeSaleLocally(input: {
-  items: { productId: string; quantity: number }[];
+  items: { productId: string; quantity: number; useFixedWholesale?: boolean }[];
   paymentMethodId: string;
   pricingMode: PricingMode;
   payCurrency: PayCurrency;
@@ -156,6 +156,7 @@ export function completeSaleLocally(input: {
     let subtotal = 0;
     const touched: CachedProduct[] = [];
     const caps = new Map<string, number | null>();
+    const skipDiscount = new Set<string>();
 
     for (const item of input.items) {
       const quantity = Number(item.quantity);
@@ -170,7 +171,10 @@ export function completeSaleLocally(input: {
         throw new Error(`INSUFFICIENT_STOCK:${product.name}`);
       }
       const wholesale = product.wholesalePrice;
-      if (input.pricingMode === "WHOLESALE" && wholesale > 0) {
+      const useFixedWholesale = Boolean(
+        item.useFixedWholesale && wholesale > 0
+      );
+      if (useFixedWholesale) {
         const qtyErr = wholesaleQtyError(quantity, {
           wholesalePrice: wholesale,
           wholesaleMinQty: product.wholesaleMinQty,
@@ -178,8 +182,14 @@ export function completeSaleLocally(input: {
         });
         if (qtyErr) throw new Error(`WHOLESALE_QTY:${product.name}:${qtyErr}`);
       }
-      const unitPrice = unitPriceFor(input.pricingMode, product);
-      caps.set(product.id, product.maxDiscountPercent);
+      const unitPrice = useFixedWholesale
+        ? wholesale
+        : unitPriceFor(
+            input.pricingMode === "WHOLESALE" ? "REGULAR" : input.pricingMode,
+            product
+          );
+      if (useFixedWholesale) skipDiscount.add(product.id);
+      caps.set(product.id, useFixedWholesale ? 0 : product.maxDiscountPercent);
       const lineTotal = Number((unitPrice * quantity).toFixed(2));
       subtotal += lineTotal;
       const taken = takeFromLots(product, quantity);
@@ -200,17 +210,27 @@ export function completeSaleLocally(input: {
 
     subtotal = Number(subtotal.toFixed(2));
     const percents = percentsFromSettings(settings);
+    const discountable = Number(
+      lineItems
+        .filter((line) => !skipDiscount.has(line.productId))
+        .reduce((sum, line) => sum + line.lineTotal, 0)
+        .toFixed(2)
+    );
     const tierPct =
       input.pricingMode === "WHOLESALE_PCT"
-        ? volumePercentForAmount(subtotal, percents)
-        : tierPercent(input.pricingMode, percents);
+        ? volumePercentForAmount(discountable, percents)
+        : skipDiscount.size === lineItems.length
+          ? 0
+          : tierPercent(input.pricingMode, percents);
     let discount = 0;
     if (tierPct > 0) {
       discount = discountForLines(
-        lineItems.map((line) => ({
-          amount: line.lineTotal,
-          maxDiscountPercent: caps.get(line.productId) ?? null,
-        })),
+        lineItems
+          .filter((line) => !skipDiscount.has(line.productId))
+          .map((line) => ({
+            amount: line.lineTotal,
+            maxDiscountPercent: caps.get(line.productId) ?? null,
+          })),
         tierPct
       ).discount;
     } else if (input.ownerDiscount) {

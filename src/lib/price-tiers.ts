@@ -119,6 +119,22 @@ export function unitPriceFor(
   return prices.price;
 }
 
+export function cartLineUnitPrice(
+  line: {
+    price: number;
+    wholesalePrice?: number;
+    onlinePrice?: number;
+    retailPrice?: number;
+    useFixedWholesale?: boolean;
+  },
+  mode: string
+) {
+  if (line.useFixedWholesale && (line.wholesalePrice || 0) > 0) {
+    return line.wholesalePrice || 0;
+  }
+  return unitPriceFor(mode === "WHOLESALE" ? "REGULAR" : mode, line);
+}
+
 export function volumePercentForAmount(subtotal: number, percents: TierPercents) {
   return tierPercent(suggestPriceMode(subtotal, percents), percents);
 }

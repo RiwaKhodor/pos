@@ -12,6 +12,7 @@ import { normalizePricingMode } from "@/lib/price-tiers";
 type CartItem = {
   productId: string;
   quantity: number;
+  useFixedWholesale?: boolean;
 };
 
 export async function POST(request: Request) {

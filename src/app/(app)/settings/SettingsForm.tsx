@@ -2,7 +2,7 @@
 
 import { FormEvent, useState } from "react";
 import { useRouter } from "next/navigation";
-import { DEFAULT_USD_TO_LBP, formatRate } from "@/lib/fx";
+import { DEFAULT_USD_TO_LBP, formatIntInput, formatRate } from "@/lib/fx";
 import { RECEIPT_PHONE } from "@/lib/store-info";
 
 type Settings = {
@@ -46,7 +46,9 @@ export function SettingsForm({ settings }: { settings: Settings }) {
       headers: { "Content-Type": "application/json" },
       body: JSON.stringify({
         storeName: form.storeName,
-        usdToLbpRate: Number(form.usdToLbpRate || DEFAULT_USD_TO_LBP),
+        usdToLbpRate: Number(
+          String(form.usdToLbpRate || DEFAULT_USD_TO_LBP).replace(/,/g, "")
+        ),
         taxRate: Number(form.taxRate || 0),
         phone: form.phone.trim() || RECEIPT_PHONE,
         receiptFooter: form.receiptFooter || null,
@@ -67,7 +69,9 @@ export function SettingsForm({ settings }: { settings: Settings }) {
     router.refresh();
   }
 
-  const ratePreview = Number(form.usdToLbpRate || DEFAULT_USD_TO_LBP);
+  const ratePreview = Number(
+    String(form.usdToLbpRate || DEFAULT_USD_TO_LBP).replace(/,/g, "")
+  );
 
   return (
     <div className="desk-panel">
@@ -106,13 +110,12 @@ export function SettingsForm({ settings }: { settings: Settings }) {
             <label htmlFor="rate">USD → L.L rate</label>
             <input
               id="rate"
-              type="number"
-              step="1"
-              min="1"
+              inputMode="numeric"
+              autoComplete="off"
               required
-              value={form.usdToLbpRate}
+              value={formatIntInput(form.usdToLbpRate)}
               onChange={(e) =>
-                setForm({ ...form, usdToLbpRate: e.target.value })
+                setForm({ ...form, usdToLbpRate: formatIntInput(e.target.value) })
               }
             />
           </div>
@@ -148,9 +151,10 @@ export function SettingsForm({ settings }: { settings: Settings }) {
         <fieldset className="desk-fieldset">
           <legend>Wholesale receipt discount</legend>
           <p className="mb-2 text-[11px] text-slate-500">
-            Used when POS is set to Wholesale — % off receipt. The percent comes
-            off the normal prices when the receipt reaches that amount. You can
-            also sell wholesale with an optional item wholesale price instead.
+            When POS is set to Wholesale — % off receipt, these percents come
+            off the normal prices after the receipt reaches that amount. An
+            item can cap that with Max discount %. A wholesale price on a line
+            skips this % and uses that price instead.
           </p>
           {(
             [

@@ -260,6 +260,18 @@ export function upsertLocalExpense(expense: {
   });
 }
 
+export function clearLocalCashiersAndExpenses() {
+  writeSnapshot("employees", []);
+  writeSnapshot("expenses", []);
+  try {
+    localDb()
+      .prepare("DELETE FROM known_users WHERE role = 'EMPLOYEE'")
+      .run();
+  } catch {
+    // local catalog may not exist on this computer
+  }
+}
+
 export function forgetLocalExpense(id: string) {
   const current = readSnapshot<{ id: string }[]>("expenses");
   if (!current) return;

@@ -32,6 +32,58 @@ function groupDigits(value: number) {
   return sign + digits.replace(/\B(?=(\d{3})+(?!\d))/g, ",");
 }
 
+export function parseGroupedNumber(raw: string) {
+  const cleaned = String(raw || "").replace(/,/g, "").replace(/[^\d.]/g, "");
+  if (!cleaned || cleaned === ".") return 0;
+  const n = Number(cleaned);
+  return Number.isFinite(n) ? n : 0;
+}
+
+export function formatUsdInput(raw: string) {
+  const cleaned = String(raw || "").replace(/,/g, "").replace(/[^\d.]/g, "");
+  if (!cleaned) return "";
+  const firstDot = cleaned.indexOf(".");
+  const intRaw = firstDot === -1 ? cleaned : cleaned.slice(0, firstDot);
+  const decRaw =
+    firstDot === -1 ? "" : cleaned.slice(firstDot + 1).replace(/\./g, "").slice(0, 2);
+  const intDigits =
+    intRaw.replace(/^0+(?=\d)/, "") ||
+    (firstDot === -1 ? "0" : intRaw === "" ? "0" : intRaw);
+  const grouped = intDigits.replace(/\B(?=(\d{3})+(?!\d))/g, ",");
+  if (firstDot === -1) return grouped;
+  return `${grouped}.${decRaw}`;
+}
+
+export function formatIntInput(raw: string) {
+  const digits = String(raw || "").replace(/[^\d]/g, "");
+  if (!digits) return "";
+  const trimmed = digits.replace(/^0+(?=\d)/, "") || "0";
+  return trimmed.replace(/\B(?=(\d{3})+(?!\d))/g, ",");
+}
+
+export const LBP_STEP = 1000;
+
+export function roundLbp(n: number) {
+  return Math.round((Number.isFinite(n) ? n : 0) / LBP_STEP) * LBP_STEP;
+}
+
+/** Cashier types thousands; we always keep L.L in 1,000s. */
+export function parseLbpInput(raw: string) {
+  return parseGroupedNumber(raw) * LBP_STEP;
+}
+
+export function lbpThousandsInput(amount: number) {
+  const thousands = Math.round(Math.max(0, amount) / LBP_STEP);
+  return formatIntInput(String(thousands));
+}
+
+export function formatUsdGrouped(amount: number) {
+  return new Intl.NumberFormat("en-US", {
+    minimumFractionDigits: 2,
+    maximumFractionDigits: 2,
+  }).format(roundMoney(amount));
+}
+
 export function formatLbp(amount: Parameters<typeof toNum>[0]) {
   return `${groupDigits(toNum(amount))} L.L`;
 }

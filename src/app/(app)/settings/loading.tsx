@@ -1,4 +1,10 @@
+import { BrandSplash } from "@/components/BrandSplash";
+import { isOwnerWeb } from "@/lib/host";
+
 export default function SettingsLoading() {
+  if (isOwnerWeb()) {
+    return <BrandSplash />;
+  }
   return (
     <div className="desk-panel">
       <div className="mb-3 text-sm font-bold">Preferences</div>

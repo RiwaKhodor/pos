@@ -48,7 +48,8 @@ Local `prisma/dev.db` (old SQLite) is unused and ignored. Do not point `DATABASE
 | Role | Email | Password |
 |------|-------|----------|
 | OWNER | owner@store.com | owner123 |
-| EMPLOYEE | cashier@store.com | employee123 |
+
+Add cashiers from Cashiers in the app. There is no demo cashier.
 
 ## What owners get
 

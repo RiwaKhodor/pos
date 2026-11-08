@@ -12,24 +12,29 @@ import { useRouter } from "next/navigation";
 import { Role } from "@/lib/roles";
 import { StoreLogo } from "@/components/StoreLogo";
 import { UpdateNotice } from "@/components/UpdateNotice";
-import { wholesaleQtyError, clampWholesaleQty } from "@/lib/wholesale";
+import { wholesaleQtyError } from "@/lib/wholesale";
 import {
   computeMixedTender,
   DEFAULT_USD_TO_LBP,
+  formatIntInput,
   formatLbp,
   formatRate,
   formatUsd,
+  formatUsdGrouped,
+  formatUsdInput,
+  lbpThousandsInput,
+  parseGroupedNumber,
+  parseLbpInput,
+  roundLbp,
   tenderPayCurrency,
   toLbp,
 } from "@/lib/fx";
 import {
   discountForLines,
   parseMaxDiscount,
-  pricingModeLabel,
   tierPercent,
-  unitPriceFor,
+  cartLineUnitPrice,
   volumePercentForAmount,
-  VOLUME_TIERS,
   type PricingMode,
   type TierPercents,
 } from "@/lib/price-tiers";
@@ -64,6 +69,7 @@ type CartLine = {
   stock: number;
   quantity: number;
   unit: string;
+  useFixedWholesale: boolean;
 };
 
 type SessionInfo = {
@@ -240,32 +246,37 @@ export default function PosPage() {
     return () => clearTimeout(timer);
   }, [query, productFilter, showProducts]);
 
-  const regularSubtotal = useMemo(
-    () =>
-      Number(
-        cart.reduce((sum, line) => sum + line.price * line.quantity, 0).toFixed(2)
-      ),
-    [cart]
-  );
   useEffect(() => {
     if (cart.length === 0) setPricingLocked(false);
   }, [cart.length]);
 
   const pricing = useMemo(() => {
     const subtotal = cart.reduce((sum, line) => {
-      return sum + unitPriceFor(pricingMode, line) * line.quantity;
+      return sum + cartLineUnitPrice(line, pricingMode) * line.quantity;
     }, 0);
     const rounded = Number(subtotal.toFixed(2));
     let discount = 0;
     let discountPercent = 0;
     let capped = false;
+    const percentLines = cart.filter((line) => !line.useFixedWholesale);
+    const discountable = Number(
+      percentLines
+        .reduce(
+          (sum, line) =>
+            sum + cartLineUnitPrice(line, pricingMode) * line.quantity,
+          0
+        )
+        .toFixed(2)
+    );
     const tierPct =
       pricingMode === "WHOLESALE_PCT"
-        ? volumePercentForAmount(rounded, tierPercents)
-        : tierPercent(pricingMode, tierPercents);
-    if (tierPct > 0) {
-      const lines = cart.map((line) => ({
-        amount: unitPriceFor(pricingMode, line) * line.quantity,
+        ? volumePercentForAmount(discountable, tierPercents)
+        : percentLines.length === 0
+          ? 0
+          : tierPercent(pricingMode, tierPercents);
+    if (tierPct > 0 && percentLines.length > 0) {
+      const lines = percentLines.map((line) => ({
+        amount: cartLineUnitPrice(line, pricingMode) * line.quantity,
         maxDiscountPercent: line.maxDiscountPercent,
       }));
       const priced = discountForLines(lines, tierPct);
@@ -308,10 +319,10 @@ export default function PosPage() {
   const tenderPreview = computeMixedTender({
     totalUsd: total,
     rate: usdToLbpRate,
-    tenderedUsd: Number(tenderedUsd) || 0,
-    tenderedLbp: Number(tenderedLbp) || 0,
-    changeUsd: changeEdited === "usd" ? Number(changeUsdInput) : null,
-    changeLbp: changeEdited === "lbp" ? Number(changeLbpInput) : null,
+    tenderedUsd: parseGroupedNumber(tenderedUsd),
+    tenderedLbp: parseLbpInput(tenderedLbp),
+    changeUsd: changeEdited === "usd" ? parseGroupedNumber(changeUsdInput) : null,
+    changeLbp: changeEdited === "lbp" ? parseLbpInput(changeLbpInput) : null,
   });
   const payCurrency = tenderPayCurrency(
     tenderPreview.tenderedUsd,
@@ -327,36 +338,19 @@ export default function PosPage() {
     const wsMin = product.wholesaleMinQty || 0;
     const wsMax = product.wholesaleMaxQty || 0;
     let amount = Math.max(1, Math.floor(qty));
-    if (pricingMode === "WHOLESALE" && wsPrice > 0 && wsMin > 0) {
-      amount = Math.max(amount, wsMin);
-    }
-    const wsErr =
-      pricingMode === "WHOLESALE"
-        ? wholesaleQtyError(amount, {
-            wholesalePrice: wsPrice,
-            wholesaleMinQty: wsMin,
-            wholesaleMaxQty: wsMax,
-          })
-        : null;
-    if (wsErr) {
-      setError(wsErr);
-      setStatus(wsErr);
-      return;
-    }
     setError("");
     let blocked = false;
     setCart((prev) => {
       const existing = prev.find((line) => line.productId === product.id);
       if (existing) {
         const wantedTotal = existing.quantity + amount;
-        const addErr =
-          pricingMode === "WHOLESALE"
-            ? wholesaleQtyError(wantedTotal, {
-                wholesalePrice: wsPrice,
-                wholesaleMinQty: wsMin,
-                wholesaleMaxQty: wsMax,
-              })
-            : null;
+        const addErr = existing.useFixedWholesale
+          ? wholesaleQtyError(wantedTotal, {
+              wholesalePrice: wsPrice,
+              wholesaleMinQty: wsMin,
+              wholesaleMaxQty: wsMax,
+            })
+          : null;
         if (addErr) {
           blocked = true;
           setError(addErr);
@@ -389,14 +383,7 @@ export default function PosPage() {
       if (amount > product.stock) {
         blocked = true;
         showStockPopup(product.name, amount, product.stock);
-        const qtyOnHand =
-          pricingMode === "WHOLESALE" && wsPrice > 0
-            ? clampWholesaleQty(product.stock, {
-                wholesaleMinQty: wsMin,
-                wholesaleMaxQty: wsMax,
-                stock: product.stock,
-              })
-            : product.stock;
+        const qtyOnHand = product.stock;
         if (qtyOnHand < 1) return prev;
         return [
           ...prev,
@@ -413,6 +400,7 @@ export default function PosPage() {
             stock: product.stock,
             quantity: qtyOnHand,
             unit: "pc",
+            useFixedWholesale: false,
           },
         ];
       }
@@ -431,6 +419,7 @@ export default function PosPage() {
           stock: product.stock,
           quantity: amount,
           unit: "pc",
+          useFixedWholesale: false,
         },
       ];
     });
@@ -442,7 +431,7 @@ export default function PosPage() {
     setQtyInput("1");
     setShowProducts(false);
     searchRef.current?.focus();
-  }, [pricingMode]);
+  }, []);
 
   async function resolveAndAdd() {
     const term = query.trim();
@@ -543,7 +532,7 @@ export default function PosPage() {
       return;
     }
 
-    if (pricingMode === "WHOLESALE") {
+    if (line.useFixedWholesale) {
       const wsErr = wholesaleQtyError(wanted, {
         wholesalePrice: line.wholesalePrice,
         wholesaleMinQty: line.wholesaleMinQty,
@@ -607,21 +596,20 @@ export default function PosPage() {
       return;
     }
     setError("");
-    if (pricingMode === "WHOLESALE") {
-      for (const line of cart) {
-        const wsErr = wholesaleQtyError(line.quantity, {
-          wholesalePrice: line.wholesalePrice,
-          wholesaleMinQty: line.wholesaleMinQty,
-          wholesaleMaxQty: line.wholesaleMaxQty,
-        });
-        if (wsErr) {
-          setError(`${line.name}: ${wsErr}`);
-          setStatus(`${line.name}: ${wsErr}`);
-          return;
-        }
+    for (const line of cart) {
+      if (!line.useFixedWholesale) continue;
+      const wsErr = wholesaleQtyError(line.quantity, {
+        wholesalePrice: line.wholesalePrice,
+        wholesaleMinQty: line.wholesaleMinQty,
+        wholesaleMaxQty: line.wholesaleMaxQty,
+      });
+      if (wsErr) {
+        setError(`${line.name}: ${wsErr}`);
+        setStatus(`${line.name}: ${wsErr}`);
+        return;
       }
     }
-    setTenderedUsd(total.toFixed(2));
+    setTenderedUsd(formatUsdInput(total.toFixed(2)));
     setTenderedLbp("0");
     setChangeUsdInput("0");
     setChangeLbpInput("0");
@@ -633,6 +621,46 @@ export default function PosPage() {
   function choosePricing(mode: PricingMode) {
     setPricingMode(mode);
     if (isOwner) setPricingLocked(true);
+  }
+
+  function toggleFixedWholesale() {
+    if (!selectedId) {
+      setStatus("Select an item, then choose receipt % or wholesale price.");
+      return;
+    }
+    const line = cart.find((item) => item.productId === selectedId);
+    if (!line) return;
+    if (!(line.wholesalePrice > 0)) {
+      setError("This item has no wholesale price. Add one on the item page if you need it.");
+      setStatus("Most items use the receipt %. Wholesale price is only for a set amount.");
+      return;
+    }
+    const next = !line.useFixedWholesale;
+    if (next) {
+      const wsErr = wholesaleQtyError(line.quantity, {
+        wholesalePrice: line.wholesalePrice,
+        wholesaleMinQty: line.wholesaleMinQty,
+        wholesaleMaxQty: line.wholesaleMaxQty,
+      });
+      if (wsErr) {
+        setError(`${line.name}: ${wsErr}`);
+        setStatus(`${line.name}: ${wsErr}`);
+        return;
+      }
+    }
+    setError("");
+    setCart((prev) =>
+      prev.map((item) =>
+        item.productId === line.productId
+          ? { ...item, useFixedWholesale: next }
+          : item
+      )
+    );
+    setStatus(
+      next
+        ? `${line.name}: wholesale price ${formatUsd(line.wholesalePrice)}. No receipt % on this line.`
+        : `${line.name}: back to the normal price (receipt % can apply).`
+    );
   }
 
   function exitPos() {
@@ -662,6 +690,7 @@ export default function PosPage() {
         items: cart.map((line) => ({
           productId: line.productId,
           quantity: line.quantity,
+          useFixedWholesale: line.useFixedWholesale,
         })),
         paymentMethodId,
         pricingMode,
@@ -733,6 +762,53 @@ export default function PosPage() {
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [cart, selectedId]);
 
+  const selectedLine = cart.find((line) => line.productId === selectedId) || null;
+  const wholesaleLineCount = cart.filter((line) => line.useFixedWholesale).length;
+  const saleHint = (() => {
+    const parts: string[] = [];
+    if (pricingMode === "WHOLESALE_PCT") {
+      if (pricing.discountPercent > 0) {
+        parts.push(
+          `Price type: Wholesale — ${pricing.discountPercent}% off the receipt at normal prices.`
+        );
+      } else {
+        parts.push(
+          "Price type: Wholesale — % off receipt. The % from Preferences applies when the receipt is high enough."
+        );
+      }
+      if (pricing.capped) {
+        parts.push("Some items stop earlier because of Max discount %.");
+      }
+    } else if (pricingMode === "ONLINE") {
+      parts.push("Price type: Online.");
+    } else if (pricingMode === "RETAIL") {
+      parts.push("Price type: Retail.");
+    } else {
+      parts.push("Price type: Regular. Normal prices. No receipt discount.");
+    }
+    if (wholesaleLineCount > 0) {
+      parts.push(
+        `${wholesaleLineCount} item${wholesaleLineCount === 1 ? "" : "s"} use a wholesale price (no receipt %).`
+      );
+    }
+    if (selectedLine) {
+      if (selectedLine.wholesalePrice > 0) {
+        parts.push(
+          selectedLine.useFixedWholesale
+            ? `Selected ${selectedLine.name}: wholesale ${formatUsd(selectedLine.wholesalePrice)}. Press Fixed WS Price again to use the receipt % instead.`
+            : `Selected ${selectedLine.name}: press Fixed WS Price for ${formatUsd(selectedLine.wholesalePrice)} instead of the receipt %.`
+        );
+      } else {
+        parts.push(
+          `Selected ${selectedLine.name}: no wholesale price. It follows this price type.`
+        );
+      }
+    } else if (cart.length > 0) {
+      parts.push("Select an item to choose receipt % or a wholesale price for that line.");
+    }
+    return parts.join(" ");
+  })();
+
   return (
     <div className="pos-shell">
       <div className="pos-title">
@@ -799,17 +875,11 @@ export default function PosPage() {
             style={{ fontWeight: 600 }}
           >
             <option value="REGULAR">Regular</option>
-            <option value="WHOLESALE">Wholesale — item prices</option>
             <option value="WHOLESALE_PCT">Wholesale — % off receipt</option>
             {isOwner ? (
               <>
                 <option value="ONLINE">Online</option>
                 <option value="RETAIL">Retail</option>
-                {VOLUME_TIERS.map((tier) => (
-                  <option key={tier.mode} value={tier.mode}>
-                    {pricingModeLabel(tier.mode, tierPercents)}
-                  </option>
-                ))}
               </>
             ) : null}
           </select>
@@ -820,11 +890,13 @@ export default function PosPage() {
         </div>
       </div>
 
+      <div className="pos-hint">{saleHint}</div>
+
       <div className="pos-table-wrap">
         <table className="pos-table">
           <thead>
             <tr>
-              <th style={{ width: "70px" }}>Qty</th>
+              <th style={{ width: "140px" }}>Qty</th>
               <th style={{ width: "70px" }}>Unit</th>
               <th>Description</th>
               <th style={{ width: "110px" }}>Price</th>
@@ -840,7 +912,7 @@ export default function PosPage() {
               </tr>
             ) : (
               cart.map((line) => {
-                const unit = unitPriceFor(pricingMode, line);
+                const unit = cartLineUnitPrice(line, pricingMode);
                 return (
                 <tr
                   key={line.productId}
@@ -860,10 +932,12 @@ export default function PosPage() {
                         <input
                           className="pos-qty-input"
                           autoFocus
-                          type="number"
-                          min={1}
+                          inputMode="numeric"
+                          autoComplete="off"
                           value={qtyDraft}
-                          onChange={(e) => setQtyDraft(e.target.value)}
+                          onChange={(e) =>
+                            setQtyDraft(e.target.value.replace(/[^\d]/g, ""))
+                          }
                           onBlur={() =>
                             applyLineQty(line, Math.floor(Number(qtyDraft)))
                           }
@@ -881,7 +955,9 @@ export default function PosPage() {
                           className="pos-qty-value"
                           onClick={() => beginQtyEdit(line)}
                         >
-                          {line.quantity.toFixed(2)}
+                          {Number.isInteger(line.quantity)
+                            ? String(line.quantity)
+                            : line.quantity.toFixed(2)}
                         </button>
                       )}
                       <button
@@ -894,7 +970,10 @@ export default function PosPage() {
                     </div>
                   </td>
                   <td>{line.unit}</td>
-                  <td>{line.name}</td>
+                  <td>
+                    {line.name}
+                    {line.useFixedWholesale ? " (fixed WS)" : ""}
+                  </td>
                   <td>{formatAmount(unit)}</td>
                   <td>{formatAmount(unit * line.quantity)}</td>
                 </tr>
@@ -923,6 +1002,19 @@ export default function PosPage() {
             onClick={voidItem}
           >
             VOID ITEM
+          </button>
+          <button
+            type="button"
+            className="pos-btn pos-btn-action"
+            onClick={toggleFixedWholesale}
+            disabled={!selectedLine}
+            title={
+              selectedLine?.wholesalePrice
+                ? "Use this item’s wholesale price, or put it back on the receipt %"
+                : "This item has no wholesale price. Add one on the item page if you need it."
+            }
+          >
+            FIXED WS PRICE
           </button>
           <button
             type="button"
@@ -1091,34 +1183,35 @@ export default function PosPage() {
                 </div>
               ) : null}
               <div className="pos-field">
-                <label htmlFor="pricing-mode">Pricing</label>
+                <label htmlFor="pricing-mode">Price Type</label>
                 <select
                   id="pricing-mode"
                   value={pricingMode}
                   onChange={(e) => choosePricing(e.target.value as PricingMode)}
                 >
-                  <option value="REGULAR">Regular (normal price)</option>
-                  <option value="WHOLESALE">Wholesale — item prices</option>
+                  <option value="REGULAR">Regular</option>
                   <option value="WHOLESALE_PCT">Wholesale — % off receipt</option>
                   {isOwner ? (
                     <>
                       <option value="ONLINE">Online</option>
                       <option value="RETAIL">Retail</option>
-                      {VOLUME_TIERS.map((tier) => (
-                        <option key={tier.mode} value={tier.mode}>
-                          {pricingModeLabel(tier.mode, tierPercents)}
-                        </option>
-                      ))}
                     </>
                   ) : null}
                 </select>
-                {pricing.discount > 0 ? (
-                  <div className="mt-1 text-[11px] text-slate-600">
-                    {pricingModeLabel(pricingMode, tierPercents)}
-                    {pricing.capped ? " (some items are capped)" : ""}:{" "}
-                    {`${pricing.discountPercent}% off = -${formatUsd(pricing.discount)}`}
-                  </div>
-                ) : null}
+                <div className="mt-1 text-[11px] text-slate-600">
+                  {pricingMode === "WHOLESALE_PCT"
+                    ? pricing.discount > 0
+                      ? `${pricing.discountPercent}% off normal prices${
+                          pricing.capped
+                            ? " (some items hit Max discount %)"
+                            : ""
+                        } = -${formatUsd(pricing.discount)}`
+                      : "Receipt is under the next Preferences amount, so % off is 0 for now."
+                    : "No receipt %. Items stay at this price type, unless a line uses a wholesale price."}
+                  {wholesaleLineCount > 0
+                    ? ` ${wholesaleLineCount} line${wholesaleLineCount === 1 ? "" : "s"} at wholesale price.`
+                    : ""}
+                </div>
               </div>
               <div className="pos-field">
                 <label htmlFor="pay-method">Payment method</label>
@@ -1140,71 +1233,101 @@ export default function PosPage() {
                   <label htmlFor="tendered-usd">Received $</label>
                   <input
                     id="tendered-usd"
-                    type="number"
-                    step="0.01"
-                    min="0"
+                    className="pos-money-input"
+                    inputMode="decimal"
+                    autoComplete="off"
                     value={tenderedUsd}
                     onChange={(e) => {
-                      setTenderedUsd(e.target.value);
+                      setTenderedUsd(formatUsdInput(e.target.value));
                       setChangeEdited(null);
                     }}
                   />
                 </div>
                 <div className="pos-field">
                   <label htmlFor="tendered-lbp">Received L.L</label>
-                  <input
-                    id="tendered-lbp"
-                    type="number"
-                    step="1"
-                    min="0"
-                    value={tenderedLbp}
-                    onChange={(e) => {
-                      setTenderedLbp(e.target.value);
-                      setChangeEdited(null);
-                    }}
-                  />
+                  <div className="pos-lbp-field">
+                    <input
+                      id="tendered-lbp"
+                      className="pos-money-input"
+                      inputMode="numeric"
+                      autoComplete="off"
+                      value={tenderedLbp}
+                      onChange={(e) => {
+                        setTenderedLbp(formatIntInput(e.target.value));
+                        setChangeEdited(null);
+                      }}
+                    />
+                    <span className="pos-lbp-suffix">,000</span>
+                  </div>
                 </div>
               </div>
-              <div className="text-[11px] text-slate-600">
-                Paid {formatUsd(tenderPreview.paidUsd)} of {formatUsd(tenderPreview.dueUsd)}.
-                Change due {formatUsd(tenderPreview.changeDueUsd)}.
+              <div className="pos-pay-board">
+                <div className="pos-pay-board-row">
+                  <span>PAID $</span>
+                  <span className="pos-pay-board-value">
+                    {formatUsd(tenderPreview.paidUsd)}
+                  </span>
+                </div>
+                <div className="pos-pay-board-row">
+                  <span>DUE $</span>
+                  <span className="pos-pay-board-value">
+                    {formatUsd(tenderPreview.dueUsd)}
+                  </span>
+                </div>
+                <div className="pos-pay-board-row pos-pay-board-due">
+                  <span>CHANGE DUE $</span>
+                  <span className="pos-pay-board-value">
+                    {formatUsd(tenderPreview.changeDueUsd)}
+                  </span>
+                </div>
+                <div className="pos-pay-board-row">
+                  <span>CHANGE DUE L.L</span>
+                  <span className="pos-pay-board-value">
+                    {formatLbp(
+                      roundLbp(toLbp(tenderPreview.changeDueUsd, usdToLbpRate))
+                    )}
+                  </span>
+                </div>
               </div>
               <div className="grid grid-cols-2 gap-2">
                 <div className="pos-field">
                   <label htmlFor="change-usd">Change $</label>
                   <input
                     id="change-usd"
-                    type="number"
-                    step="0.01"
-                    min="0"
+                    className="pos-money-input"
+                    inputMode="decimal"
+                    autoComplete="off"
                     value={
                       changeEdited === "usd"
                         ? changeUsdInput
-                        : tenderPreview.changeUsd.toFixed(2)
+                        : formatUsdGrouped(tenderPreview.changeUsd)
                     }
                     onChange={(e) => {
                       setChangeEdited("usd");
-                      setChangeUsdInput(e.target.value);
+                      setChangeUsdInput(formatUsdInput(e.target.value));
                     }}
                   />
                 </div>
                 <div className="pos-field">
                   <label htmlFor="change-lbp">Change L.L</label>
-                  <input
-                    id="change-lbp"
-                    type="number"
-                    step="1"
-                    min="0"
-                    value={
-                      changeEdited === "lbp"
-                        ? changeLbpInput
-                        : String(Math.round(tenderPreview.changeLbp))
-                    }
-                    onChange={(e) => {
-                      setChangeEdited("lbp");
-                      setChangeLbpInput(e.target.value);
-                    }}
-                  />
+                  <div className="pos-lbp-field">
+                    <input
+                      id="change-lbp"
+                      className="pos-money-input"
+                      inputMode="numeric"
+                      autoComplete="off"
+                      value={
+                        changeEdited === "lbp"
+                          ? changeLbpInput
+                          : lbpThousandsInput(tenderPreview.changeLbp)
+                      }
+                      onChange={(e) => {
+                        setChangeEdited("lbp");
+                        setChangeLbpInput(formatIntInput(e.target.value));
+                      }}
+                    />
+                    <span className="pos-lbp-suffix">,000</span>
+                  </div>
                 </div>
               </div>
               {error ? (
