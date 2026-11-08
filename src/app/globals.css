@@ -522,8 +522,10 @@ th {
   white-space: nowrap;
 }
 
-.app-splash,
-.brand-splash {
+.app-splash {
+  position: fixed;
+  inset: 0;
+  z-index: 99999;
   display: flex;
   align-items: center;
   justify-content: center;
@@ -531,18 +533,7 @@ th {
   color: #111;
 }
 
-.app-splash {
-  position: fixed;
-  inset: 0;
-  z-index: 99999;
-}
-
-.brand-splash {
-  min-height: 100dvh;
-}
-
-.app-splash p,
-.brand-splash p {
+.app-splash p {
   margin: 0;
   padding: 0 24px;
   text-align: center;
