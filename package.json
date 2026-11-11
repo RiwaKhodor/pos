@@ -71,7 +71,8 @@
         "provider": "github",
         "owner": "RiwaKhodor",
         "repo": "pos",
-        "private": true
+        "private": true,
+        "releaseType": "release"
       }
     ]
   },
