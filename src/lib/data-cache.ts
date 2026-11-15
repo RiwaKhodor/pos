@@ -125,6 +125,7 @@ export const getCachedItems = unstable_cache(
         lowStockAt: p.lowStockAt,
         active: p.active,
         showInPos: p.showInPos,
+        description: p.description || "",
         categoryName: p.category?.name || null,
         containerCode: formatContainerStock(
           p.stockLots.map((lot) => ({

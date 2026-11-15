@@ -24,6 +24,7 @@ export type ItemRow = {
   showInPos: boolean;
   categoryName: string | null;
   containerCode: string | null;
+  description?: string | null;
 };
 
 function formatAmount(n: number) {
@@ -57,11 +58,60 @@ export function ItemsList({
         ? "Scan a barcode in Look For, or click New to add an item."
         : "Select an item you added, then click Correct to fix the name, price, or barcode."
   );
+  const fillingRef = useRef(false);
 
   useEffect(() => {
     if (viewOnly) return;
     lookRef.current?.focus();
   }, [viewOnly]);
+
+  useEffect(() => {
+    if ((!canManage && !viewOnly) || fillingRef.current) return;
+    fillingRef.current = true;
+    let cancelled = false;
+
+    async function fillEmptyDescriptions() {
+      let skipIds: string[] = [];
+      let total = 0;
+      setHint("Writing descriptions for items that have none…");
+      for (let step = 0; step < 80 && !cancelled; step += 1) {
+        const res = await fetch("/api/items/lookup/fill", {
+          method: "POST",
+          headers: { "Content-Type": "application/json" },
+          body: JSON.stringify({ skipIds }),
+        });
+        if (!res.ok) break;
+        const data = (await res.json().catch(() => ({}))) as {
+          filled?: number;
+          attempted?: number;
+          remaining?: number;
+          skipIds?: string[];
+        };
+        skipIds = data.skipIds || skipIds;
+        total += data.filled || 0;
+        if (data.filled) {
+          setHint(`Wrote descriptions on ${total} items…`);
+        }
+        if (!data.remaining || !data.attempted) break;
+      }
+      if (cancelled) return;
+      if (total > 0) {
+        setHint(
+          `Wrote descriptions on ${total} existing items. Names were not changed.`
+        );
+        router.refresh();
+      } else {
+        setHint(
+          "Scan a barcode in Look For, or click New to add an item."
+        );
+      }
+    }
+
+    void fillEmptyDescriptions();
+    return () => {
+      cancelled = true;
+    };
+  }, [canManage, viewOnly, router]);
 
   const items = useMemo(() => {
     const q = lookFor.trim().toLowerCase();
@@ -73,6 +123,7 @@ export function ItemsList({
         item.barcode || "",
         item.categoryName || "",
         item.containerCode || "",
+        item.description || "",
       ]
         .join(" ")
         .toLowerCase();
@@ -231,6 +282,9 @@ export function ItemsList({
                   <strong>{item.name}</strong>
                   <span>${formatAmount(item.price)}</span>
                 </div>
+                {item.description ? (
+                  <div className="sale-card-meta">{item.description}</div>
+                ) : null}
                 <div className="sale-card-meta">
                   Stock {item.stock.toFixed(1)} {item.unit}
                   {item.stock <= item.lowStockAt ? " · Low stock" : ""}
@@ -266,6 +320,7 @@ export function ItemsList({
               <th>Barcode</th>
               <th>Item Code</th>
               <th>Item Name</th>
+              <th>Description</th>
               <th>Category</th>
               <th>Containers</th>
               <th>U.O.M</th>
@@ -286,7 +341,7 @@ export function ItemsList({
           <tbody>
             {items.length === 0 ? (
               <tr>
-                <td colSpan={canManage ? 15 : 12}>No items found.</td>
+                <td colSpan={canManage ? 16 : 13}>No items found.</td>
               </tr>
             ) : (
               items.map((item, index) => (
@@ -303,6 +358,9 @@ export function ItemsList({
                   <td>{item.barcode || "—"}</td>
                   <td>{item.sku || "—"}</td>
                   <td>{item.name}</td>
+                  <td className="max-w-[280px] text-[11px] whitespace-normal">
+                    {item.description || "—"}
+                  </td>
                   <td>{item.categoryName || "—"}</td>
                   <td>{item.containerCode || "—"}</td>
                   <td>{item.unit}</td>

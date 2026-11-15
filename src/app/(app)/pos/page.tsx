@@ -42,6 +42,7 @@ import {
 type Product = {
   id: string;
   name: string;
+  description?: string | null;
   sku: string | null;
   barcode?: string | null;
   price: number;
@@ -1099,7 +1100,14 @@ export default function PosPage() {
                         style={{ cursor: "pointer" }}
                       >
                         <td>{product.sku || "—"}</td>
-                        <td>{product.name}</td>
+                        <td>
+                          <div>{product.name}</div>
+                          {product.description ? (
+                            <div className="text-[11px] text-[#444]">
+                              {product.description}
+                            </div>
+                          ) : null}
+                        </td>
                         <td>{formatAmount(product.price)}</td>
                         <td>{product.stock}</td>
                       </tr>

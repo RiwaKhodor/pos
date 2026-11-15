@@ -4,7 +4,7 @@ import { Role } from "@/lib/roles";
 import { ItemsList } from "./ItemsList";
 import { getCachedItems } from "@/lib/data-cache";
 import { isDbUnavailable } from "@/lib/db-unavailable";
-import { listLocalItems } from "@/lib/catalog-cache";
+import { listLocalItems, writeLocalDescriptions } from "@/lib/catalog-cache";
 import { isOwnerWeb } from "@/lib/host";
 import { prisma } from "@/lib/prisma";
 import { toNum } from "@/lib/money";
@@ -32,6 +32,7 @@ export default async function ItemsPage() {
         lowStockAt: true,
         active: true,
         showInPos: true,
+        description: true,
         category: { select: { name: true } },
         container: { select: { code: true, name: true } },
       },
@@ -58,6 +59,7 @@ export default async function ItemsPage() {
           showInPos: item.showInPos,
           categoryName: item.category?.name || null,
           containerCode: item.container?.name || item.container?.code || null,
+          description: item.description || "",
         }))}
       />
     );
@@ -65,11 +67,26 @@ export default async function ItemsPage() {
 
   const localItems = listLocalItems();
   let initialItems = localItems;
-  if (localItems.length === 0) {
-    try {
-      initialItems = await getCachedItems();
-    } catch (error) {
-      console.error(error);
+  try {
+    const fromSupabase = await prisma.product.findMany({
+      select: { id: true, description: true },
+    });
+    writeLocalDescriptions(fromSupabase);
+    const byId = new Map(
+      fromSupabase.map((row) => [row.id, row.description || ""])
+    );
+    initialItems = listLocalItems().map((item) => ({
+      ...item,
+      description: item.description || byId.get(item.id) || "",
+    }));
+  } catch (error) {
+    console.error(error);
+    if (localItems.length === 0) {
+      try {
+        initialItems = await getCachedItems();
+      } catch (fallback) {
+        console.error(fallback);
+      }
     }
   }
 

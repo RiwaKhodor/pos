@@ -33,6 +33,7 @@ export type CachedProduct = {
   customsDuty: number;
   containerId: string | null;
   lots: CachedLot[];
+  description?: string;
 };
 
 export type CachedSettings = {
@@ -103,6 +104,7 @@ function rowToProduct(row: ProductRow): CachedProduct {
     customsDuty: row.customs_duty,
     containerId: row.container_id,
     lots: JSON.parse(row.lots_json) as CachedLot[],
+    description: row.description || "",
   };
 }
 
@@ -535,6 +537,29 @@ function mirrorProductRecordNow(product: {
   }
 }
 
+export function writeLocalDescriptions(
+  rows: { id: string; description: string | null }[]
+) {
+  saveLocal(() => {
+    const db = localDb();
+    const stmt = db.prepare(
+      "UPDATE catalog_products SET description = ? WHERE id = ?"
+    );
+    db.exec("BEGIN");
+    try {
+      for (const row of rows) {
+        const text = String(row.description || "").trim();
+        if (!text) continue;
+        stmt.run(text, row.id);
+      }
+      db.exec("COMMIT");
+    } catch (error) {
+      db.exec("ROLLBACK");
+      throw error;
+    }
+  });
+}
+
 export function forgetCatalogProduct(id: string) {
   saveLocal(() => {
     localDb().prepare("DELETE FROM catalog_products WHERE id = ?").run(id);
@@ -661,10 +686,11 @@ export function searchCatalog(query: string) {
          AND (
            lower(name) LIKE ? OR lower(ifnull(sku, '')) LIKE ?
            OR lower(ifnull(barcode, '')) LIKE ?
+           OR lower(ifnull(description, '')) LIKE ?
          )
        ORDER BY name LIMIT 50`
     )
-    .all(like, like, like) as ProductRow[];
+    .all(like, like, like, like) as ProductRow[];
   const products = rows.map(rowToProduct);
   if (exact) {
     const found = rowToProduct(exact);
@@ -690,6 +716,7 @@ export type LocalItemRow = {
   showInPos: boolean;
   categoryName: string | null;
   containerCode: string | null;
+  description?: string | null;
 };
 
 function containerHeaders() {
@@ -757,6 +784,7 @@ export function listLocalItems(): LocalItemRow[] {
       showInPos: product.showInPos,
       categoryName: row.category_name || null,
       containerCode: containerLabel(product, headers),
+      description: row.description || "",
     };
   });
 }

@@ -96,6 +96,8 @@ export function ItemForm({
   const router = useRouter();
   const barcodeRef = useRef<HTMLInputElement>(null);
   const nameRef = useRef<HTMLInputElement>(null);
+  const lookupSeq = useRef(0);
+  const barcodeLookupTimer = useRef<ReturnType<typeof setTimeout> | null>(null);
   const [form, setForm] = useState<ItemFormValues>({
     ...emptyForm,
     ...initial,
@@ -109,6 +111,9 @@ export function ItemForm({
   );
   const [labelCopies, setLabelCopies] = useState("1");
   const [saving, setSaving] = useState(false);
+  const [catalogMatches, setCatalogMatches] = useState<
+    { name: string; description: string }[]
+  >([]);
   const [printLabel, setPrintLabel] = useState<{
     name: string;
     price: number;
@@ -139,6 +144,17 @@ export function ItemForm({
       nameRef.current?.focus();
     }
   }, [mode]);
+
+  const existingDescFill = useRef(false);
+  useEffect(() => {
+    if (mode !== "edit" || existingDescFill.current) return;
+    if ((initial?.description || "").trim()) return;
+    const barcode = (initial?.barcode || "").trim();
+    const name = (initial?.name || "").trim();
+    if (!barcode && !name) return;
+    existingDescFill.current = true;
+    void fillFromCatalog({ barcode, name });
+  }, [mode, initial?.description, initial?.barcode, initial?.name]);
 
   function dutyFor(containerId: string, cost: string) {
     if (!containerId) return null;
@@ -187,12 +203,16 @@ export function ItemForm({
       const byName = products.filter(
         (p) => p.name && p.name.toLowerCase() === code.toLowerCase()
       );
+      const digits = code.replace(/\D/g, "");
       const existing =
-        products.find(
-          (p) =>
+        products.find((p) => {
+          const itemDigits = (p.barcode || "").replace(/\D/g, "");
+          return (
+            (itemDigits && digits && itemDigits === digits) ||
             (p.barcode && p.barcode.toLowerCase() === code.toLowerCase()) ||
             (p.sku && p.sku.toLowerCase() === code.toLowerCase())
-        ) || (byName.length === 1 ? byName[0] : null);
+          );
+        }) || (byName.length === 1 ? byName[0] : null);
       if (byName.length > 1 && !existing) {
         setError("More than one item has this name. Type the item code instead.");
         setScanHint("Type the item code from List of Items, then press Enter.");
@@ -260,10 +280,92 @@ export function ItemForm({
       }
       setArrivalOf(null);
       if (raw != null) setField("barcode", raw);
+      await fillFromCatalog({ barcode: code, name: form.name });
+      return;
     }
 
-    setScanHint("Barcode captured. Enter item name and price.");
-    nameRef.current?.focus();
+    await fillFromCatalog({ barcode: code, name: form.name });
+  }
+
+  async function fillFromCatalog(opts: { barcode?: string; name?: string }) {
+    const barcode = (opts.barcode || "").trim();
+    const name = (opts.name || "").trim();
+    if (!barcode && !name) return;
+    const seq = ++lookupSeq.current;
+    setScanHint(
+      barcode
+        ? "Looking up the company barcode…"
+        : "Writing the description…"
+    );
+    try {
+      const res = await fetch("/api/items/lookup", {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ barcode, name }),
+      });
+      const data = (await res.json().catch(() => ({}))) as {
+        name?: string;
+        description?: string;
+        found?: boolean;
+        matches?: { name: string; description: string }[];
+      };
+      if (seq !== lookupSeq.current) return;
+      if (!res.ok) {
+        setScanHint(
+          barcode
+            ? "Barcode captured. Enter item name and price."
+            : ""
+        );
+        return;
+      }
+      const matches = (data.matches || []).filter((item) => item.name);
+      setCatalogMatches(matches);
+      const itemId = initial?.id || form.id;
+      setForm((prev) => {
+        const nextName = prev.name.trim() ? prev.name : data.name || prev.name;
+        const nextDescription = prev.description.trim()
+          ? prev.description
+          : data.description || prev.description;
+        return { ...prev, name: nextName, description: nextDescription };
+      });
+      if (
+        itemId &&
+        !(form.description || "").trim() &&
+        data.description
+      ) {
+        void fetch(`/api/products/${itemId}`, {
+          method: "PATCH",
+          headers: { "Content-Type": "application/json" },
+          body: JSON.stringify({ description: data.description }),
+        });
+      }
+      if (matches.length > 1 && !data.name) {
+        setScanHint("Names found. Tap the real item name below.");
+      } else if (data.found && data.name) {
+        setScanHint(
+          matches.length > 1
+            ? `Filled the item name. ${matches.length} options — tap another if this is wrong.`
+            : barcode
+              ? "Catalog found this product. Check the name, then enter the price."
+              : "Description filled from the item name. You can edit it."
+        );
+      } else if (form.name.trim() || name) {
+        setScanHint("Keeping the name you entered. Description can fill from that name.");
+      } else {
+        setScanHint(
+          barcode
+            ? "No catalog name for this barcode yet. Type the name from the pack."
+            : "Type a clearer name if you want a description filled."
+        );
+      }
+    } catch {
+      setScanHint(
+        barcode
+          ? "Barcode captured. Enter item name and price."
+          : ""
+      );
+    }
+    if (barcode) nameRef.current?.focus();
   }
 
   async function save() {
@@ -491,6 +593,32 @@ export function ItemForm({
           {scanHint}
         </div>
       ) : null}
+      {catalogMatches.length > 0 ? (
+        <div className="mb-2 border border-[#bbb] bg-white px-3 py-2">
+          <div className="mb-1 text-[11px] font-bold">
+            Names found — tap the right one
+          </div>
+          <div className="flex flex-col gap-1">
+            {catalogMatches.map((match) => (
+              <button
+                key={match.name}
+                type="button"
+                className="text-left text-xs text-[#174a8c] underline"
+                onClick={() => {
+                  setForm((prev) => ({
+                    ...prev,
+                    name: match.name,
+                    description: match.description || prev.description,
+                  }));
+                  setScanHint("Name updated. You can still edit it.");
+                }}
+              >
+                {match.name}
+              </button>
+            ))}
+          </div>
+        </div>
+      ) : null}
 
       <div className="item-form-layout">
         <div className="desk-form-grid">
@@ -503,10 +631,25 @@ export function ItemForm({
                 ref={barcodeRef}
                 value={form.barcode}
                 onChange={(e) => {
-                  setField("barcode", e.target.value);
+                  const value = e.target.value;
+                  setField("barcode", value);
                   if (arrivalOf) {
                     setArrivalOf(null);
                     setForm((prev) => ({ ...prev, id: undefined }));
+                  }
+                  const digits = value.replace(/\D/g, "");
+                  if (barcodeLookupTimer.current) {
+                    clearTimeout(barcodeLookupTimer.current);
+                  }
+                  if (digits.length >= 12 && digits.length <= 14) {
+                    barcodeLookupTimer.current = setTimeout(() => {
+                      void onBarcodeScan(value);
+                    }, 250);
+                  }
+                }}
+                onBlur={(e) => {
+                  if (e.currentTarget.value.trim()) {
+                    void onBarcodeScan(e.currentTarget.value);
                   }
                 }}
                 onKeyDown={(e) => {
@@ -515,7 +658,7 @@ export function ItemForm({
                     onBarcodeScan((e.target as HTMLInputElement).value);
                   }
                 }}
-                placeholder="Your barcode, or leave empty to create one"
+                placeholder="Scan or type the company barcode, then wait"
                 autoComplete="off"
               />
             </div>
@@ -547,6 +690,11 @@ export function ItemForm({
                 required
                 value={form.name}
                 onChange={(e) => setField("name", e.target.value)}
+                onBlur={(e) => {
+                  const name = e.currentTarget.value.trim();
+                  if (!name) return;
+                  void fillFromCatalog({ name });
+                }}
               />
             </div>
             <div className="desk-form-row">
@@ -572,7 +720,7 @@ export function ItemForm({
               <label htmlFor="desc">Description</label>
               <textarea
                 id="desc"
-                rows={2}
+                rows={5}
                 value={form.description}
                 onChange={(e) => setField("description", e.target.value)}
               />
