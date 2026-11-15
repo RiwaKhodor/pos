@@ -594,29 +594,29 @@ async function lookupUpcItemDb(code: string): Promise<CatalogHit[]> {
     `https://api.upcitemdb.com/prod/trial/lookup?upc=${encodeURIComponent(code)}`
   );
   const items = (json?.items as Record<string, unknown>[]) || [];
-  return items
-    .map((item) => {
-      const foundCode = cleanText(item.upc || item.ean || item.gtin || "");
-      if (foundCode && !codesMatch(foundCode, code)) return null;
-      const name = cleanText(item.title || item.description);
-      if (isJunkName(name)) return null;
-      const size = extractSize(item.size, item.dimension, item.description, name);
-      const fullName = withSizeInName(name, size);
-      return {
-        name: fullName,
-        description: clearEnglishDescription(
-          fullName,
-          describeFromParts([
-            item.category ? `Category: ${cleanText(item.category)}` : "",
-            item.brand ? `Brand: ${cleanText(item.brand)}` : "",
-            size ? `Size: ${size}` : "",
-            cleanText(item.description),
-          ])
-        ),
-        trusted: true,
-      };
-    })
-    .filter((hit): hit is CatalogHit => Boolean(hit));
+  const hits: CatalogHit[] = [];
+  for (const item of items) {
+    const foundCode = cleanText(item.upc || item.ean || item.gtin || "");
+    if (foundCode && !codesMatch(foundCode, code)) continue;
+    const name = cleanText(item.title || item.description);
+    if (isJunkName(name)) continue;
+    const size = extractSize(item.size, item.dimension, item.description, name);
+    const fullName = withSizeInName(name, size);
+    hits.push({
+      name: fullName,
+      description: clearEnglishDescription(
+        fullName,
+        describeFromParts([
+          item.category ? `Category: ${cleanText(item.category)}` : "",
+          item.brand ? `Brand: ${cleanText(item.brand)}` : "",
+          size ? `Size: ${size}` : "",
+          cleanText(item.description),
+        ])
+      ),
+      trusted: true,
+    });
+  }
+  return hits;
 }
 
 async function lookupIcecat(code: string, language = "de"): Promise<CatalogHit | null> {
