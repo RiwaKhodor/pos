@@ -358,7 +358,7 @@ export function ItemsList({
                   <td>{item.barcode || "—"}</td>
                   <td>{item.sku || "—"}</td>
                   <td>{item.name}</td>
-                  <td className="max-w-[280px] text-[11px] whitespace-normal">
+                  <td className="item-desc">
                     {item.description || "—"}
                   </td>
                   <td>{item.categoryName || "—"}</td>
