@@ -51,8 +51,8 @@ export const metadata: Metadata = isOwnerWeb()
     };
 
 export const viewport: Viewport = isOwnerWeb()
-  ? { themeColor: "#ffffff", colorScheme: "light" }
-  : { themeColor: "#e8e8e8" };
+  ? { themeColor: "#ffffff", colorScheme: "light", viewportFit: "cover" }
+  : { themeColor: "#e8e8e8", viewportFit: "cover" };
 
 export default function RootLayout({
   children,

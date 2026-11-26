@@ -6,6 +6,10 @@ export type VanoUpdateState = {
 
 declare global {
   interface Window {
+    vanoDesktop?: {
+      electron: boolean;
+      platform: string;
+    };
     vanoUpdate?: {
       getState: () => Promise<VanoUpdateState>;
       install: () => Promise<boolean>;

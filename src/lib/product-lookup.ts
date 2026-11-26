@@ -369,6 +369,10 @@ function englishProductName(name: string) {
     [/\btyp\s+(\d+)\b/gi, "Type $1"],
     [/\bb\s*x\s*h\s*:/gi, "W x H:"],
     [/\bmit\b/gi, "with"],
+    [/\bschwangerschafts[- ]?pflegeöl\b/gi, "Pregnancy Care Oil"],
+    [/\bschwangerschaftsöl\b/gi, "Pregnancy Care Oil"],
+    [/\bschwangerschafts[- ]?pflegecreme\b/gi, "Pregnancy Care Cream"],
+    [/\bpflegeöl\b/gi, "Care Oil"],
   ];
   for (const [pattern, english] of swaps) {
     text = text.replace(pattern, english);
@@ -526,6 +530,8 @@ function shortItemName(name: string) {
     ""
   );
   text = text.replace(/\s*[-–|]\s*[\w.-]+\.(de|com|info|at|ch)\s*$/i, "");
+  text = text.replace(/\s*[-–|]\s*HotEUDeals.*$/i, "");
+  text = text.replace(/\s*[–-]\s*(prevents|clinically tested|made in germany).*$/i, "");
   text = text.replace(/\s*[·•]\s*barcode\s*\d{8,14}.*$/i, "");
   text = text.replace(/\s*-\s*barcodepedia.*$/i, "");
   text = text.replace(/^\s*(n\/?d|s\/?m|n\.?\s*d\.?)\s+/i, "");
@@ -626,6 +632,10 @@ function guessKind(name: string) {
     [/\b(wasser|water)\b/, "bottled water"],
     [/\b(olivenöl|olive oil)\b/, "an olive oil"],
     [/\b(sonnenblumenöl|sunflower oil)\b/, "a sunflower oil"],
+    [
+      /\b(pregnancy (?:care )?oil|schwangerschafts(?:-?pflege)?öl|pflegeöl|body oil|massage oil)\b/,
+      "a pregnancy care oil",
+    ],
     [/\b(\boil\b|öl)\b/, "a cooking oil"],
     [/\b(schokolade|chocolate)\b/, "a chocolate"],
     [/\b(chips|crisps)\b/, "a snack chips pack"],
@@ -847,8 +857,10 @@ function hitLooksWeak(name: string) {
   const text = cleanText(name);
   if (!text || isJunkName(text)) return true;
   if (/\bwith\s+\d+$/i.test(text) || /\bmit\s+\d+$/i.test(text)) return true;
-  if (/^(understanding|discover|explore|learn|why|how|what|when|where)\b/i.test(text)) return true;
-  return /\b(n\/d|s\/m|gel de banho|gel de ba[nñ]o|gel bagno|cx\.?\s*\d+|caja de|your clothes|in your)\b/i.test(text);
+  if (/^(understanding|discover|explore|learn|why|how|what|when|where|via)\b/i.test(text)) return true;
+  return /\b(n\/d|s\/m|gel de banho|gel de ba[nñ]o|gel bagno|cx\.?\s*\d+|caja de|your clothes|in your|thinkpad|hoteudeals|kingston sub|october 19|in october)\b/i.test(
+    text
+  );
 }
 
 function hitsAreStrong(hits: CatalogHit[]) {
@@ -1108,7 +1120,7 @@ function isJunkName(name: string) {
   ) {
     return true;
   }
-  return /ean-?suche|ean-?search|ean finder|open ean|suchergebnisse|welches produkt|steckt hinter|datenbank|produktbewertung|validieren|generieren|produktcode|suche:|recherche de produits|produits par|par ean|barcode lookup|upc lookup|not found|404|search results|look\s*up|duckduckgo|wikipedia|buycott|itemdb|home page|codecheck|barcoo|openean|gtin db|retail product|mid-tower|atx,|preisvergleich|lowest price|best price|idealo|geizhals|amazon\.|ebay\.|understanding the|fibres? in your|in your clothes|sustainability|blog|how to |guide to |everything you need/i.test(
+  return /ean-?suche|ean-?search|ean finder|open ean|suchergebnisse|welches produkt|steckt hinter|datenbank|produktbewertung|validieren|generieren|produktcode|suche:|recherche de produits|produits par|par ean|barcode lookup|upc lookup|not found|404|search results|look\s*up|duckduckgo|wikipedia|buycott|itemdb|home page|codecheck|barcoo|openean|gtin db|retail product|mid-tower|atx,|preisvergleich|lowest price|best price|idealo|geizhals|amazon\.|ebay\.|understanding the|fibres? in your|in your clothes|sustainability|blog|how to |guide to |everything you need|hoteudeals|thinkpad|kingston sub|\bprevents$|^via \d+|lenovo/i.test(
     text
   );
 }
@@ -2677,6 +2689,30 @@ function lookupLocalBarcode(barcode: string): CatalogHit[] {
   }
 }
 
+/** A real item name has more than the brand: at least two words, or one word plus a size. */
+function nameIsSpecific(name: string) {
+  const words = cleanText(name).split(/\s+/).filter((word) => /[a-zà-ÿ]/i.test(word));
+  return words.length >= 2;
+}
+
+const UNIT_WORDS = /^(ml|l|g|kg|mg|cl|pcs|stk|x)$/i;
+
+/** "sanosan baby care lotion500ml" -> "Sanosan Baby Care Lotion 500 ml". */
+function tidyShopName(name: string) {
+  let text = cleanText(name)
+    .replace(/([a-zà-ÿ])(\d)/gi, "$1 $2")
+    .replace(/(\d)\s*(ml|l|g|kg|mg|cl|pcs|stk)\b/gi, (_, n: string, unit: string) => `${n} ${unit.toLowerCase()}`)
+    .replace(/\s+/g, " ")
+    .trim();
+  if (text && text === text.toLowerCase()) {
+    text = text
+      .split(" ")
+      .map((word) => (UNIT_WORDS.test(word) ? word : word.charAt(0).toUpperCase() + word.slice(1)))
+      .join(" ");
+  }
+  return text;
+}
+
 function hitFromWeb(web: WebProduct | null): CatalogHit | null {
   if (!web?.name || isJunkName(web.name) || hitLooksWeak(web.name)) return null;
   return {
@@ -2753,7 +2789,7 @@ async function lookupBarcode(barcode: string) {
     const webHit = hitFromWeb(web);
     // mergeHits ranks trusted (barcode-confirmed) hits first.
     hits = webHit ? mergeHits([webHit, scraped]) : scraped;
-  } else if (!hits.some((hit) => hit.trusted)) {
+  } else if (!hits.some((hit) => hit.trusted && nameIsSpecific(hit.name))) {
     // Only unconfirmed names (page titles that merely mention the number): check the web
     // for a page that really shows this barcode, and let a confirmed result win.
     const webHit = hitFromWeb(await lookupBarcodeOnWeb(main, hits[0]?.name || ""));
@@ -2861,7 +2897,7 @@ export async function lookupProduct(input: { barcode?: string; name?: string }) 
           const brand = labeledValue(match.description, "Brand");
           const size =
             extractSize(match.name, match.description) || labeledValue(match.description, "Size");
-          const name = await englishShopName(match.name, brand, size);
+          const name = tidyShopName(await englishShopName(match.name, brand, size));
           return {
             ...match,
             name,
@@ -2872,7 +2908,10 @@ export async function lookupProduct(input: { barcode?: string; name?: string }) 
         })
     )
   ).filter((match) => match.name && !isJunkName(match.name));
-  const trusted = cleanedMatches.filter((match) => match.trusted);
+  // Never settle for a bare brand ("sanosan") when a full item name was also found.
+  const specific = cleanedMatches.filter((match) => nameIsSpecific(match.name));
+  const pool = specific.length ? specific : cleanedMatches;
+  const trusted = pool.filter((match) => match.trusted);
   const englishName = (item: CatalogHit) =>
     !looksGerman(item.name) &&
     /\b(shower gel|shampoo|conditioner|toothpaste|cream|deodorant|soap|oil|lotion|mineral water|carbonated|air fryer|coffee grinder|coffee machine|kettle|lip balm|hex bolt|wood screw|universal screw|mouthwash|ice cube|silicone|panel radiator|radiator)\b/i.test(
@@ -2881,10 +2920,10 @@ export async function lookupProduct(input: { barcode?: string; name?: string }) 
     !hitLooksWeak(item.name);
   const hit =
     trusted.find(englishName) ||
-    cleanedMatches.find(englishName) ||
-    cleanedMatches.find((item) => !looksGerman(item.name)) ||
+    pool.find(englishName) ||
+    pool.find((item) => !looksGerman(item.name)) ||
     trusted[0] ||
-    cleanedMatches[0] ||
+    pool[0] ||
     null;
   const name = hit?.name || typedName;
   let description = hit?.description || "";
@@ -2934,7 +2973,7 @@ export async function lookupProduct(input: { barcode?: string; name?: string }) 
             ).split(/(?<=[.!?])\s+/)
           )
         : description,
-    matches: cleanedMatches,
+    matches: pool,
     found: cleanedMatches.length > 0,
     priceEur: priceEur > 0 ? priceEur : undefined,
   };

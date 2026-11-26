@@ -583,9 +583,15 @@ th {
   gap: 12px;
   background: linear-gradient(180deg, #fafafa, #e6e6e6);
   border-bottom: 1px solid #b5b5b5;
-  padding: 5px 10px;
+  padding: calc(5px + env(safe-area-inset-top, 0px)) 10px 5px
+    calc(10px + env(safe-area-inset-left, 0px));
   font-size: 15px;
   font-weight: 700;
+}
+
+html.vano-mac.vano-electron .desktop-titlebar {
+  padding-left: 78px;
+  min-height: 40px;
 }
 
 .desktop-title-brand {
@@ -727,6 +733,13 @@ th {
   padding: 0 4px;
   position: relative;
   z-index: 30;
+}
+
+.desktop-menubar-updates {
+  margin-left: auto;
+  display: flex;
+  align-items: center;
+  padding: 0 8px 0 12px;
 }
 
 .desktop-home-btn,

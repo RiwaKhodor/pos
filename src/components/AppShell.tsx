@@ -186,6 +186,16 @@ export function AppShell({
       : EMPLOYEE_MENUS;
 
   useEffect(() => {
+    const desktop = window.vanoDesktop;
+    const mac =
+      desktop?.platform === "darwin" ||
+      /Mac|iPhone|iPad/.test(navigator.platform) ||
+      /Mac OS X/.test(navigator.userAgent);
+    document.documentElement.classList.toggle("vano-electron", Boolean(desktop?.electron));
+    document.documentElement.classList.toggle("vano-mac", mac);
+  }, []);
+
+  useEffect(() => {
     if (user.role === Role.OWNER) {
       setTabs((prev) => {
         const extras = prev.filter((t) => !PINNED_HREFS.has(t.href));
@@ -291,7 +301,6 @@ export function AppShell({
           POS System — {storeName}
         </span>
         <div className="desktop-userbox">
-          <UpdateNotice />
           <span className="desktop-user">
             {user.name} ({user.role === Role.OWNER ? "Owner" : "Cashier"})
           </span>
@@ -372,6 +381,9 @@ export function AppShell({
         <button type="button" className="desktop-menu-btn" onClick={logout}>
           {ownerWeb ? "Sign out" : "Switch User"}
         </button>
+        <div className="desktop-menubar-updates">
+          <UpdateNotice />
+        </div>
       </div>
 
       {ownerWeb ? null : (

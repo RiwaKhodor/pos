@@ -1,5 +1,10 @@
 const { contextBridge, ipcRenderer } = require("electron");
 
+contextBridge.exposeInMainWorld("vanoDesktop", {
+  electron: true,
+  platform: process.platform,
+});
+
 contextBridge.exposeInMainWorld("vanoUpdate", {
   getState: () => ipcRenderer.invoke("vano-update-state"),
   install: () => ipcRenderer.invoke("vano-update-install"),

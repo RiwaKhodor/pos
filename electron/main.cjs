@@ -48,6 +48,12 @@ function createWindow() {
     title: "VANO POS",
     icon: path.join(__dirname, "icon.ico"),
     autoHideMenuBar: true,
+    ...(process.platform === "darwin"
+      ? {
+          titleBarStyle: "hiddenInset",
+          trafficLightPosition: { x: 12, y: 12 },
+        }
+      : {}),
     webPreferences: {
       contextIsolation: true,
       nodeIntegration: false,
