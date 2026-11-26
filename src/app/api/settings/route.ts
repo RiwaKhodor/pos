@@ -5,7 +5,7 @@ import { prisma } from "@/lib/prisma";
 import { jsonMoney } from "@/lib/money";
 import { invalidateStoreNameCache } from "@/lib/store";
 import { setStoreNameCookie } from "@/lib/store-cookie";
-import { DEFAULT_USD_TO_LBP } from "@/lib/fx";
+import { DEFAULT_EUR_TO_USD, DEFAULT_USD_TO_LBP } from "@/lib/fx";
 import { RECEIPT_PHONE } from "@/lib/store-info";
 import { readCachedSettings, writeCachedSettings } from "@/lib/catalog-cache";
 import { isDbUnavailable } from "@/lib/db-unavailable";
@@ -45,6 +45,9 @@ export async function PUT(request: Request) {
     const rate = Number(body.usdToLbpRate ?? DEFAULT_USD_TO_LBP);
     const usdToLbpRate =
       Number.isFinite(rate) && rate > 0 ? rate : DEFAULT_USD_TO_LBP;
+    const euroRate = Number(body.eurToUsdRate ?? DEFAULT_EUR_TO_USD);
+    const eurToUsdRate =
+      Number.isFinite(euroRate) && euroRate > 0 ? euroRate : DEFAULT_EUR_TO_USD;
     const storeName = String(body.storeName || "VANO").trim() || "VANO";
     const percent = (value: unknown) => {
       const n = Number(value ?? 0);
@@ -82,6 +85,7 @@ export async function PUT(request: Request) {
       storeName,
       currency: "USD",
       usdToLbpRate,
+      eurToUsdRate,
       taxRate: Number(body.taxRate ?? 0),
       address,
       phone: body.phone ? String(body.phone).trim() : RECEIPT_PHONE,
@@ -89,6 +93,14 @@ export async function PUT(request: Request) {
       ...discounts,
     };
     writeCachedSettings(snapshot);
+
+    try {
+      await prisma.$executeRawUnsafe(
+        `ALTER TABLE "StoreSettings" ADD COLUMN IF NOT EXISTS "eurToUsdRate" DECIMAL(12,4) NOT NULL DEFAULT 1`
+      );
+    } catch {
+      /* column exists, or database is offline */
+    }
 
     try {
       await prisma.storeSettings.upsert({
@@ -106,7 +118,7 @@ export async function PUT(request: Request) {
     bustCache("settings");
     notifyOwners({
       title: "Preferences updated",
-      body: `${storeName}: tax ${snapshot.taxRate}% · rate ${usdToLbpRate} · discounts ${discounts.discAbove500}% / ${discounts.discAbove1000}% / ${discounts.discAbove3000}% / ${discounts.discAbove5000}% / ${discounts.discAbove7000}% / ${discounts.discAbove10000}%`,
+      body: `${storeName}: tax ${snapshot.taxRate}% · L.L ${usdToLbpRate} · € ${eurToUsdRate} · discounts ${discounts.discAbove500}% / ${discounts.discAbove1000}% / ${discounts.discAbove3000}% / ${discounts.discAbove5000}% / ${discounts.discAbove7000}% / ${discounts.discAbove10000}%`,
       url: "/owner",
       tag: `settings:${Date.now()}`,
     });

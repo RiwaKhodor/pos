@@ -2,12 +2,13 @@
 
 import { FormEvent, useState } from "react";
 import { useRouter } from "next/navigation";
-import { DEFAULT_USD_TO_LBP, formatIntInput, formatRate } from "@/lib/fx";
+import { DEFAULT_EUR_TO_USD, DEFAULT_USD_TO_LBP, formatIntInput, formatRate } from "@/lib/fx";
 import { RECEIPT_PHONE } from "@/lib/store-info";
 
 type Settings = {
   storeName: string;
   usdToLbpRate: number;
+  eurToUsdRate: number;
   taxRate: number;
   phone: string | null;
   receiptFooter: string | null;
@@ -24,6 +25,7 @@ export function SettingsForm({ settings }: { settings: Settings }) {
   const [form, setForm] = useState({
     storeName: settings.storeName,
     usdToLbpRate: String(settings.usdToLbpRate || DEFAULT_USD_TO_LBP),
+    eurToUsdRate: String(settings.eurToUsdRate || DEFAULT_EUR_TO_USD),
     taxRate: String(settings.taxRate),
     phone: settings.phone || RECEIPT_PHONE,
     receiptFooter: settings.receiptFooter || "",
@@ -49,6 +51,7 @@ export function SettingsForm({ settings }: { settings: Settings }) {
         usdToLbpRate: Number(
           String(form.usdToLbpRate || DEFAULT_USD_TO_LBP).replace(/,/g, "")
         ),
+        eurToUsdRate: Number(String(form.eurToUsdRate || DEFAULT_EUR_TO_USD).replace(/,/g, "")),
         taxRate: Number(form.taxRate || 0),
         phone: form.phone.trim() || RECEIPT_PHONE,
         receiptFooter: form.receiptFooter || null,
@@ -121,6 +124,23 @@ export function SettingsForm({ settings }: { settings: Settings }) {
           </div>
           <p className="text-[11px] text-slate-500">
             1 Dollar = {formatRate(ratePreview || DEFAULT_USD_TO_LBP)} L.L
+          </p>
+          <div className="desk-form-row mt-2">
+            <label htmlFor="eurRate">Euro → Dollar rate</label>
+            <input
+              id="eurRate"
+              type="number"
+              step="0.0001"
+              min="0.0001"
+              required
+              value={form.eurToUsdRate}
+              onChange={(e) => setForm({ ...form, eurToUsdRate: e.target.value })}
+            />
+          </div>
+          <p className="text-[11px] text-slate-500">
+            1 Euro = {Number(form.eurToUsdRate || DEFAULT_EUR_TO_USD)} Dollars.
+            When a German shop price is found on a barcode, Cost fills as Euro ×
+            this rate. Normal Price stays for you to type.
           </p>
         </fieldset>
 

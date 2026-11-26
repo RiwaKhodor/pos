@@ -4,7 +4,11 @@ import { Role } from "@/lib/roles";
 import { ItemsList } from "./ItemsList";
 import { getCachedItems } from "@/lib/data-cache";
 import { isDbUnavailable } from "@/lib/db-unavailable";
-import { listLocalItems, writeLocalDescriptions } from "@/lib/catalog-cache";
+import {
+  listLocalItems,
+  refreshCatalogFromSupabase,
+  writeLocalDescriptions,
+} from "@/lib/catalog-cache";
 import { isOwnerWeb } from "@/lib/host";
 import { prisma } from "@/lib/prisma";
 import { toNum } from "@/lib/money";
@@ -68,17 +72,61 @@ export default async function ItemsPage() {
   const localItems = listLocalItems();
   let initialItems = localItems;
   try {
+    await refreshCatalogFromSupabase();
     const fromSupabase = await prisma.product.findMany({
-      select: { id: true, description: true },
+      orderBy: { name: "asc" },
+      select: {
+        id: true,
+        createdById: true,
+        name: true,
+        sku: true,
+        barcode: true,
+        unit: true,
+        price: true,
+        wholesalePrice: true,
+        onlinePrice: true,
+        retailPrice: true,
+        cost: true,
+        customsDuty: true,
+        stock: true,
+        lowStockAt: true,
+        active: true,
+        showInPos: true,
+        description: true,
+        category: { select: { name: true } },
+        container: { select: { code: true, name: true } },
+      },
     });
     writeLocalDescriptions(fromSupabase);
-    const byId = new Map(
-      fromSupabase.map((row) => [row.id, row.description || ""])
-    );
-    initialItems = listLocalItems().map((item) => ({
-      ...item,
-      description: item.description || byId.get(item.id) || "",
-    }));
+    const localById = new Map(listLocalItems().map((item) => [item.id, item]));
+    initialItems = fromSupabase.map((item) => {
+      const local = localById.get(item.id);
+      return {
+        id: item.id,
+        createdById: item.createdById || local?.createdById || null,
+        name: item.name,
+        sku: item.sku,
+        barcode: item.barcode,
+        unit: item.unit,
+        price: toNum(item.price),
+        wholesalePrice: toNum(item.wholesalePrice),
+        onlinePrice: toNum(item.onlinePrice),
+        retailPrice: toNum(item.retailPrice),
+        cost: local?.cost ?? toNum(item.cost),
+        customsDuty: local?.customsDuty ?? toNum(item.customsDuty),
+        stock: local?.stock ?? item.stock,
+        lowStockAt: item.lowStockAt,
+        active: item.active,
+        showInPos: item.showInPos,
+        categoryName: item.category?.name || local?.categoryName || null,
+        containerCode:
+          local?.containerCode ||
+          item.container?.name ||
+          item.container?.code ||
+          null,
+        description: item.description || local?.description || "",
+      };
+    });
   } catch (error) {
     console.error(error);
     if (localItems.length === 0) {

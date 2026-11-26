@@ -15,6 +15,7 @@ export default async function SettingsPage() {
     ? {
         storeName: cached.storeName,
         usdToLbpRate: cached.usdToLbpRate,
+        eurToUsdRate: cached.eurToUsdRate,
         taxRate: cached.taxRate,
         phone: cached.phone,
         receiptFooter: cached.receiptFooter,
@@ -34,6 +35,7 @@ export default async function SettingsPage() {
       settings = {
         storeName: "VANO",
         usdToLbpRate: 89500,
+        eurToUsdRate: 1,
         taxRate: 0,
         phone: "81 604 320",
         receiptFooter: null,

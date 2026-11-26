@@ -267,7 +267,7 @@ export function ItemsList({
         </button>
       </div>
 
-      <div className="mb-2 border border-[#9bb4cc] bg-[#eef5ff] px-3 py-2 text-xs">
+      <div className="items-hint">
         {hint}
       </div>
 
@@ -313,7 +313,7 @@ export function ItemsList({
 
       {viewOnly ? null : (
       <div className="desk-grid-wrap">
-        <table className="desk-grid">
+        <table className="desk-grid items-grid">
           <thead>
             <tr>
               <th>ID</th>
@@ -355,11 +355,13 @@ export function ItemsList({
                   }}
                 >
                   <td>{index + 1}</td>
-                  <td>{item.barcode || "—"}</td>
+                  <td className="item-barcode">{item.barcode || "—"}</td>
                   <td>{item.sku || "—"}</td>
-                  <td>{item.name}</td>
+                  <td className="item-name">{item.name}</td>
                   <td className="item-desc">
-                    {item.description || "—"}
+                    <div className="item-desc-text" title={item.description || ""}>
+                      {item.description || "—"}
+                    </div>
                   </td>
                   <td>{item.categoryName || "—"}</td>
                   <td>{item.containerCode || "—"}</td>

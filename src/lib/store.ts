@@ -2,7 +2,7 @@ import { unstable_cache, revalidateTag } from "next/cache";
 import { cache } from "react";
 import { prisma } from "./prisma";
 import { toNum } from "./money";
-import { DEFAULT_USD_TO_LBP } from "./fx";
+import { DEFAULT_EUR_TO_USD, DEFAULT_USD_TO_LBP } from "./fx";
 
 const STORE_SETTINGS_TAG = "store-settings";
 
@@ -10,6 +10,7 @@ export type StoreSettingsSnapshot = {
   storeName: string;
   currency: string;
   usdToLbpRate: number;
+  eurToUsdRate: number;
   taxRate: number;
   discAbove500: number;
   discAbove1000: number;
@@ -28,6 +29,11 @@ const fetchStoreSettings = unstable_cache(
       storeName: settings?.storeName || "VANO",
       currency: settings?.currency || "USD",
       usdToLbpRate: toNum(settings?.usdToLbpRate ?? DEFAULT_USD_TO_LBP) || DEFAULT_USD_TO_LBP,
+      eurToUsdRate:
+        toNum(
+          (settings as { eurToUsdRate?: unknown } | null)?.eurToUsdRate ??
+            DEFAULT_EUR_TO_USD
+        ) || DEFAULT_EUR_TO_USD,
       taxRate: toNum(settings?.taxRate ?? 0),
       discAbove500: toNum(settings?.discAbove500 ?? 0),
       discAbove1000: toNum(settings?.discAbove1000 ?? 0),
@@ -37,7 +43,7 @@ const fetchStoreSettings = unstable_cache(
       discAbove10000: toNum(settings?.discAbove10000 ?? 0),
     };
   },
-  ["store-settings-v4"],
+  ["store-settings-v5"],
   { revalidate: 60, tags: [STORE_SETTINGS_TAG] }
 );
 

@@ -3,6 +3,12 @@ import { toNum } from "./money";
 export type PayCurrency = "USD" | "LBP" | "MIXED";
 
 export const DEFAULT_USD_TO_LBP = 89500;
+export const DEFAULT_EUR_TO_USD = 1;
+
+export function eurToUsd(eur: number, rate: number) {
+  if (!(eur > 0) || !(rate > 0)) return 0;
+  return roundMoney(eur * rate);
+}
 
 export function roundMoney(n: number) {
   const value = Number.isFinite(n) ? n : 0;

@@ -3,6 +3,7 @@ import { Prisma } from "@prisma/client";
 import { authErrorResponse, requireRole } from "@/lib/auth";
 import { Role } from "@/lib/roles";
 import { prisma } from "@/lib/prisma";
+import { revalidatePath } from "next/cache";
 import { bustCache } from "@/lib/data-cache";
 import { forgetCatalogProduct, mirrorProductRecord, readProduct } from "@/lib/catalog-cache";
 import { notifyOwners } from "@/lib/push";
@@ -345,6 +346,7 @@ export async function PATCH(request: Request, { params }: Params) {
       noteItemChange(id, product.name, before, body);
     }
     bustCache("products", "owner-stats");
+    revalidatePath("/items");
     return jsonMoney({ product });
   } catch (error) {
     if (error instanceof Error && error.message === "NOT_FOUND") {

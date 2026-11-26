@@ -40,6 +40,7 @@ export type CachedSettings = {
   storeName: string;
   currency: string;
   usdToLbpRate: number;
+  eurToUsdRate: number;
   taxRate: number;
   address: string | null;
   phone: string | null;
@@ -129,6 +130,7 @@ export function readCachedSettings(): CachedSettings | null {
     storeName: parsed.storeName || "VANO",
     currency: parsed.currency || "USD",
     usdToLbpRate: parsed.usdToLbpRate || 89500,
+    eurToUsdRate: parsed.eurToUsdRate || 1,
     taxRate: parsed.taxRate || 0,
     address: parsed.address ?? null,
     phone: parsed.phone ?? null,
@@ -1110,6 +1112,7 @@ export async function refreshCatalogFromSupabase() {
       storeName: settings?.storeName || "VANO",
       currency: settings?.currency || "USD",
       usdToLbpRate: toNum(settings?.usdToLbpRate) || 89500,
+      eurToUsdRate: toNum((settings as { eurToUsdRate?: unknown } | null)?.eurToUsdRate) || 1,
       taxRate: toNum(settings?.taxRate),
       address: settings?.address ?? null,
       phone: settings?.phone ?? null,

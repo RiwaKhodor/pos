@@ -1,7 +1,7 @@
 import { unstable_cache, revalidateTag } from "next/cache";
 import { prisma } from "./prisma";
 import { toNum } from "./money";
-import { DEFAULT_USD_TO_LBP } from "./fx";
+import { DEFAULT_EUR_TO_USD, DEFAULT_USD_TO_LBP } from "./fx";
 import { formatContainerStock } from "./stock-lots";
 
 export function bustCache(...tags: string[]) {
@@ -25,6 +25,9 @@ export const getCachedStoreSettings = unstable_cache(
     return {
       storeName: settings.storeName,
       usdToLbpRate: toNum(settings.usdToLbpRate) || DEFAULT_USD_TO_LBP,
+      eurToUsdRate:
+        toNum((settings as { eurToUsdRate?: unknown }).eurToUsdRate) ||
+        DEFAULT_EUR_TO_USD,
       taxRate: toNum(settings.taxRate),
       phone: settings.phone,
       receiptFooter: settings.receiptFooter,

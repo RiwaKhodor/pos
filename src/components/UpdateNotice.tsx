@@ -4,12 +4,19 @@ import { useEffect, useState } from "react";
 import type { VanoUpdateState } from "@/types/vano-update";
 
 export function UpdateNotice() {
-  const [state, setState] = useState<VanoUpdateState | null>(null);
+  const [state, setState] = useState<VanoUpdateState>({
+    status: "checking",
+    version: null,
+    current: "",
+  });
   const [open, setOpen] = useState(false);
 
   useEffect(() => {
     const api = window.vanoUpdate;
-    if (!api) return;
+    if (!api) {
+      setState({ status: "none", version: null, current: "" });
+      return;
+    }
     void api.getState().then((next) => {
       setState(next);
       if (next.status === "ready" || next.status === "downloading") setOpen(true);
@@ -20,24 +27,22 @@ export function UpdateNotice() {
     });
   }, []);
 
-  if (!state) return null;
-
   const pending = state.status === "ready" || state.status === "downloading";
   const versionLabel = state.version ? `Version ${state.version}` : "A new version";
 
   return (
     <div className="update-notice" onClick={(event) => event.stopPropagation()}>
-      {pending ? (
-        <button
-          type="button"
-          className="update-notice-banner"
-          onClick={() => setOpen(true)}
-        >
-          {state.status === "downloading"
-            ? `${versionLabel} is downloading`
-            : `${versionLabel} — tap Update`}
-        </button>
-      ) : null}
+      <button
+        type="button"
+        className={pending ? "update-notice-banner" : "update-notice-banner idle"}
+        onClick={() => setOpen(true)}
+      >
+        {state.status === "downloading"
+          ? `${versionLabel} is downloading`
+          : pending
+            ? `${versionLabel} — tap Update`
+            : "Updates"}
+      </button>
       <button
         type="button"
         className="update-notice-btn"

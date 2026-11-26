@@ -192,6 +192,7 @@ export default async function EditItemPage({ params }: Params) {
         id: lot.id,
         containerId: lot.containerId || "",
         quantity: String(lot.quantity),
+        costEur: "",
         cost: String(lot.cost),
         customsDuty: String(lot.customsDuty),
       }))}

@@ -186,6 +186,7 @@ model StoreSettings {
   storeName     String  @default("VANO")
   currency      String  @default("USD")
   usdToLbpRate  Decimal @default(89500) @db.Decimal(12, 4) // 1 USD = this many L.L
+  eurToUsdRate  Decimal @default(1) @db.Decimal(12, 4) // 1 EUR = this many USD
   taxRate       Decimal @default(0) @db.Decimal(8, 4)
   address       String?
   phone         String?

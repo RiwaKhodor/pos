@@ -3,8 +3,9 @@
 import { FormEvent, useEffect, useRef, useState } from "react";
 import { useRouter } from "next/navigation";
 import { Barcode } from "@/components/Barcode";
+import { isCompleteBarcode } from "@/lib/gtin";
 import { customsFromContainer } from "@/lib/container-duty";
-import { formatUsd } from "@/lib/fx";
+import { DEFAULT_EUR_TO_USD, eurToUsd, formatUsd, roundMoney } from "@/lib/fx";
 import { Role } from "@/lib/roles";
 
 type Category = { id: string; name: string };
@@ -20,6 +21,7 @@ export type ItemLot = {
   id?: string;
   containerId: string;
   quantity: string;
+  costEur: string;
   cost: string;
   customsDuty: string;
 };
@@ -106,13 +108,13 @@ export function ItemForm({
   const [success, setSuccess] = useState("");
   const [scanHint, setScanHint] = useState(
     mode === "create"
-      ? "Type the name and price. Put the barcode you want on the item, or leave barcode empty and the system creates one. To add more of an item you already have, type its name or item code and press Enter."
+      ? "Scan or type the barcode — lookup starts when the code is complete. Leave barcode empty and the system can create one. To add more of an item you already have, type its name or item code and press Enter."
       : ""
   );
   const [labelCopies, setLabelCopies] = useState("1");
   const [saving, setSaving] = useState(false);
   const [catalogMatches, setCatalogMatches] = useState<
-    { name: string; description: string }[]
+    { name: string; description: string; priceUsd?: number; priceEur?: number }[]
   >([]);
   const [printLabel, setPrintLabel] = useState<{
     name: string;
@@ -121,14 +123,16 @@ export function ItemForm({
     quantity: number;
   } | null>(null);
   const [printingLabel, setPrintingLabel] = useState(false);
+  const [eurToUsdRate, setEurToUsdRate] = useState(DEFAULT_EUR_TO_USD);
   const [arrivalOf, setArrivalOf] = useState<string | null>(null);
   const [lotRows, setLotRows] = useState<ItemLot[]>(
     initialLots && initialLots.length > 0
-      ? initialLots
+      ? initialLots.map((lot) => ({ ...lot, costEur: lot.costEur || "" }))
       : [
           {
             containerId: initial?.containerId || "",
             quantity: initial?.stock || "0",
+            costEur: "",
             cost: initial?.cost || "0",
             customsDuty: initial?.customsDuty || "0",
           },
@@ -141,20 +145,19 @@ export function ItemForm({
 
   useEffect(() => {
     if (mode === "create") {
-      nameRef.current?.focus();
+      barcodeRef.current?.focus();
     }
   }, [mode]);
 
-  const existingDescFill = useRef(false);
   useEffect(() => {
-    if (mode !== "edit" || existingDescFill.current) return;
-    if ((initial?.description || "").trim()) return;
-    const barcode = (initial?.barcode || "").trim();
-    const name = (initial?.name || "").trim();
-    if (!barcode && !name) return;
-    existingDescFill.current = true;
-    void fillFromCatalog({ barcode, name });
-  }, [mode, initial?.description, initial?.barcode, initial?.name]);
+    void fetch("/api/settings")
+      .then((res) => res.json())
+      .then((data) => {
+        const rate = Number(data.settings?.eurToUsdRate);
+        if (Number.isFinite(rate) && rate > 0) setEurToUsdRate(rate);
+      })
+      .catch(() => undefined);
+  }, []);
 
   function dutyFor(containerId: string, cost: string) {
     if (!containerId) return null;
@@ -171,6 +174,15 @@ export function ItemForm({
       rows.map((row, i) => {
         if (i !== index) return row;
         const next = { ...row, ...patch };
+        if (patch.costEur !== undefined) {
+          const eur = Number(patch.costEur);
+          if (eur > 0 && eurToUsdRate > 0) {
+            next.cost = String(eurToUsd(eur, eurToUsdRate));
+          }
+        } else if (patch.cost !== undefined && eurToUsdRate > 0) {
+          const usd = Number(patch.cost);
+          if (usd > 0) next.costEur = String(roundMoney(usd / eurToUsdRate));
+        }
         if (patch.customsDuty === undefined) {
           const duty = dutyFor(next.containerId, next.cost);
           if (duty != null) next.customsDuty = String(duty);
@@ -178,6 +190,40 @@ export function ItemForm({
         return next;
       })
     );
+  }
+
+  function fillFirstLotCosts(costEur?: number, costUsd?: number) {
+    if (!(costEur && costEur > 0) && !(costUsd && costUsd > 0)) return;
+    const eur =
+      costEur && costEur > 0
+        ? String(roundMoney(costEur))
+        : costUsd && eurToUsdRate > 0
+          ? String(roundMoney(costUsd / eurToUsdRate))
+          : "";
+    const usd =
+      costUsd && costUsd > 0
+        ? String(roundMoney(costUsd))
+        : costEur
+          ? String(eurToUsd(costEur, eurToUsdRate))
+          : "";
+    setLotRows((rows) => {
+      const next = rows.length
+        ? [...rows]
+        : [
+            {
+              containerId: "",
+              quantity: "0",
+              costEur: eur,
+              cost: usd || "0",
+              customsDuty: "0",
+            },
+          ];
+      const first = { ...next[0], costEur: eur, cost: usd || next[0].cost };
+      const duty = dutyFor(first.containerId, first.cost);
+      if (duty != null) first.customsDuty = String(duty);
+      next[0] = first;
+      return next;
+    });
   }
 
   function setField<K extends keyof ItemFormValues>(
@@ -264,6 +310,7 @@ export function ItemForm({
           {
             containerId: "",
             quantity: "",
+            costEur: "",
             cost: "",
             customsDuty: "0",
           },
@@ -294,7 +341,7 @@ export function ItemForm({
     const seq = ++lookupSeq.current;
     setScanHint(
       barcode
-        ? "Looking up the company barcode…"
+        ? "Looking up the company barcode… rare items are searched on the web and can take up to a minute."
         : "Writing the description…"
     );
     try {
@@ -307,7 +354,9 @@ export function ItemForm({
         name?: string;
         description?: string;
         found?: boolean;
-        matches?: { name: string; description: string }[];
+        matches?: { name: string; description: string; priceUsd?: number; priceEur?: number }[];
+        priceUsd?: number;
+        priceEur?: number;
       };
       if (seq !== lookupSeq.current) return;
       if (!res.ok) {
@@ -322,12 +371,20 @@ export function ItemForm({
       setCatalogMatches(matches);
       const itemId = initial?.id || form.id;
       setForm((prev) => {
-        const nextName = prev.name.trim() ? prev.name : data.name || prev.name;
-        const nextDescription = prev.description.trim()
-          ? prev.description
-          : data.description || prev.description;
+        const fromScan = Boolean(barcode && data.found && data.name);
+        const nextName = fromScan
+          ? data.name || prev.name
+          : prev.name.trim()
+            ? prev.name
+            : data.name || prev.name;
+        const nextDescription = fromScan
+          ? data.description || prev.description
+          : prev.description.trim()
+            ? prev.description
+            : data.description || prev.description;
         return { ...prev, name: nextName, description: nextDescription };
       });
+      fillFirstLotCosts(data.priceEur, data.priceUsd);
       if (
         itemId &&
         !(form.description || "").trim() &&
@@ -342,11 +399,17 @@ export function ItemForm({
       if (matches.length > 1 && !data.name) {
         setScanHint("Names found. Tap the real item name below.");
       } else if (data.found && data.name) {
+        const priceNote =
+          data.priceEur != null && data.priceUsd != null
+            ? ` Shop €${Number(data.priceEur).toFixed(2)} → $${Number(data.priceUsd).toFixed(2)} cost.`
+            : barcode
+              ? " Check the name, then enter the price."
+              : "";
         setScanHint(
           matches.length > 1
-            ? `Filled the item name. ${matches.length} options — tap another if this is wrong.`
+            ? `Filled the item name. ${matches.length} options — tap another if this is wrong.${priceNote}`
             : barcode
-              ? "Catalog found this product. Check the name, then enter the price."
+              ? `Catalog found this product.${priceNote || " Check the name, then enter the price."}`
               : "Description filled from the item name. You can edit it."
         );
       } else if (form.name.trim() || name) {
@@ -365,10 +428,10 @@ export function ItemForm({
           : ""
       );
     }
-    if (barcode) nameRef.current?.focus();
+    if (mode === "create") barcodeRef.current?.focus();
   }
 
-  async function save() {
+  async function save(closeAfter = false) {
     setError("");
     setSuccess("");
     if (
@@ -457,7 +520,7 @@ export function ItemForm({
 
     if (!res.ok) {
       setError(data.error || "Save failed");
-      return;
+      return false;
     }
 
     if (receiving) {
@@ -488,7 +551,7 @@ export function ItemForm({
         );
       }
       setLotRows([
-        { containerId: "", quantity: "", cost: "", customsDuty: "0" },
+        { containerId: "", quantity: "", costEur: "", cost: "", customsDuty: "0" },
       ]);
     } else if (creating && data.product?.id) {
       const madeBarcode = String(data.product.barcode || form.barcode || "");
@@ -522,6 +585,10 @@ export function ItemForm({
     }
 
     router.refresh();
+    if (closeAfter) {
+      router.push(homeHref);
+    }
+    return true;
   }
 
   async function onSubmit(e: FormEvent) {
@@ -610,7 +677,12 @@ export function ItemForm({
                     name: match.name,
                     description: match.description || prev.description,
                   }));
-                  setScanHint("Name updated. You can still edit it.");
+                  fillFirstLotCosts(match.priceEur, match.priceUsd);
+                  setScanHint(
+                    match.priceUsd != null
+                      ? `Name updated. Shop €${Number(match.priceEur || 0).toFixed(2)} → $${Number(match.priceUsd).toFixed(2)} cost.`
+                      : "Name updated. You can still edit it."
+                  );
                 }}
               >
                 {match.name}
@@ -637,14 +709,15 @@ export function ItemForm({
                     setArrivalOf(null);
                     setForm((prev) => ({ ...prev, id: undefined }));
                   }
-                  const digits = value.replace(/\D/g, "");
                   if (barcodeLookupTimer.current) {
                     clearTimeout(barcodeLookupTimer.current);
                   }
-                  if (digits.length >= 12 && digits.length <= 14) {
+                  // Only auto-search a complete barcode (valid check digit), so a slow
+                  // scanner never triggers a search on half a code. Enter still works for any code.
+                  if (isCompleteBarcode(value)) {
                     barcodeLookupTimer.current = setTimeout(() => {
                       void onBarcodeScan(value);
-                    }, 250);
+                    }, 350);
                   }
                 }}
                 onBlur={(e) => {
@@ -655,10 +728,13 @@ export function ItemForm({
                 onKeyDown={(e) => {
                   if (e.key === "Enter") {
                     e.preventDefault();
-                    onBarcodeScan((e.target as HTMLInputElement).value);
+                    if (barcodeLookupTimer.current) {
+                      clearTimeout(barcodeLookupTimer.current);
+                    }
+                    void onBarcodeScan((e.target as HTMLInputElement).value);
                   }
                 }}
-                placeholder="Scan or type the company barcode, then wait"
+                placeholder="Scan or type the company barcode"
                 autoComplete="off"
               />
             </div>
@@ -690,10 +766,14 @@ export function ItemForm({
                 required
                 value={form.name}
                 onChange={(e) => setField("name", e.target.value)}
-                onBlur={(e) => {
-                  const name = e.currentTarget.value.trim();
-                  if (!name) return;
-                  void fillFromCatalog({ name });
+                onKeyDown={(e) => {
+                  if (e.key === "Enter") {
+                    e.preventDefault();
+                    void fillFromCatalog({
+                      barcode: form.barcode,
+                      name: (e.target as HTMLInputElement).value,
+                    });
+                  }
                 }}
               />
             </div>
@@ -803,7 +883,20 @@ export function ItemForm({
                       />
                     </div>
                     <div className="desk-form-row">
-                      <label htmlFor={`lot-cost-${index}`}>Cost</label>
+                      <label htmlFor={`lot-cost-eur-${index}`}>Cost (EUR)</label>
+                      <input
+                        id={`lot-cost-eur-${index}`}
+                        type="number"
+                        step="0.01"
+                        min="0"
+                        value={lot.costEur || ""}
+                        onChange={(e) =>
+                          updateLot(index, { costEur: e.target.value })
+                        }
+                      />
+                    </div>
+                    <div className="desk-form-row">
+                      <label htmlFor={`lot-cost-${index}`}>Cost ($)</label>
                       <input
                         id={`lot-cost-${index}`}
                         type="number"
@@ -1108,7 +1201,7 @@ export function ItemForm({
               "Type the name and price. Put the barcode you want on the item, or leave barcode empty and the system creates one."
             );
             router.push("/items/new");
-            setTimeout(() => nameRef.current?.focus(), 50);
+            setTimeout(() => barcodeRef.current?.focus(), 50);
           }}
         >
           New
@@ -1125,7 +1218,7 @@ export function ItemForm({
           type="button"
           className="desk-btn"
           disabled={saving}
-          onClick={() => save()}
+          onClick={() => void save(true)}
         >
           Save/Close
         </button>

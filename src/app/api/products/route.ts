@@ -4,6 +4,7 @@ import { authErrorResponse, requireRole } from "@/lib/auth";
 import { Role } from "@/lib/roles";
 import { prisma } from "@/lib/prisma";
 import { jsonMoney } from "@/lib/money";
+import { revalidatePath } from "next/cache";
 import { bustCache } from "@/lib/data-cache";
 import { notifyOwners } from "@/lib/push";
 import { mirrorProductRecord } from "@/lib/catalog-cache";
@@ -197,6 +198,7 @@ export async function POST(request: Request) {
       });
     }
     bustCache("products", "owner-stats");
+    revalidatePath("/items");
     return jsonMoney({ product }, { status: 201 });
   } catch (error) {
     if (
