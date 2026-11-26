@@ -186,13 +186,20 @@ export function AppShell({
       : EMPLOYEE_MENUS;
 
   useEffect(() => {
-    const desktop = window.vanoDesktop;
-    const mac =
-      desktop?.platform === "darwin" ||
-      /Mac|iPhone|iPad/.test(navigator.platform) ||
-      /Mac OS X/.test(navigator.userAgent);
-    document.documentElement.classList.toggle("vano-electron", Boolean(desktop?.electron));
-    document.documentElement.classList.toggle("vano-mac", mac);
+    try {
+      const desktop = window.vanoDesktop;
+      const mac =
+        desktop?.platform === "darwin" ||
+        /Mac|iPhone|iPad/.test(navigator.platform) ||
+        /Mac OS X/.test(navigator.userAgent);
+      document.documentElement.classList.toggle(
+        "vano-electron",
+        Boolean(desktop?.electron)
+      );
+      document.documentElement.classList.toggle("vano-mac", mac);
+    } catch {
+      /* browser privacy settings can block platform checks */
+    }
   }, []);
 
   useEffect(() => {
@@ -301,6 +308,7 @@ export function AppShell({
           POS System — {storeName}
         </span>
         <div className="desktop-userbox">
+          <UpdateNotice />
           <span className="desktop-user">
             {user.name} ({user.role === Role.OWNER ? "Owner" : "Cashier"})
           </span>

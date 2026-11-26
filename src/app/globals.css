@@ -727,6 +727,7 @@ html.vano-mac.vano-electron .desktop-titlebar {
 .desktop-menubar {
   display: flex;
   align-items: center;
+  flex-wrap: wrap;
   gap: 1px;
   background: #f3f3f3;
   border-bottom: 1px solid #b8b8b8;
@@ -739,7 +740,25 @@ html.vano-mac.vano-electron .desktop-titlebar {
   margin-left: auto;
   display: flex;
   align-items: center;
+  flex-shrink: 0;
   padding: 0 8px 0 12px;
+}
+
+.desktop-menubar-updates .update-notice-banner {
+  display: none;
+}
+
+html.vano-mac .desktop-menubar {
+  flex-wrap: wrap;
+}
+
+html.vano-mac .desktop-menu-btn,
+html.vano-mac .desktop-home-btn {
+  flex-shrink: 0;
+}
+
+html.vano-mac .desktop-titlebar .update-notice-banner {
+  display: none;
 }
 
 .desktop-home-btn,
