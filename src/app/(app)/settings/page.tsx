@@ -25,6 +25,7 @@ export default async function SettingsPage() {
         discAbove5000: cached.discAbove5000,
         discAbove7000: cached.discAbove7000,
         discAbove10000: cached.discAbove10000,
+        wholesaleOfNormalPercent: cached.wholesaleOfNormalPercent,
       }
     : null;
   if (!settings) {
@@ -45,6 +46,7 @@ export default async function SettingsPage() {
         discAbove5000: 0,
         discAbove7000: 0,
         discAbove10000: 0,
+        wholesaleOfNormalPercent: 0,
       };
     }
   }

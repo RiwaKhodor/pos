@@ -7,6 +7,7 @@ import { isCompleteBarcode } from "@/lib/gtin";
 import { customsFromContainer } from "@/lib/container-duty";
 import { DEFAULT_EUR_TO_USD, eurToUsd, formatUsd, roundMoney } from "@/lib/fx";
 import { Role } from "@/lib/roles";
+import { wholesaleFromPercent } from "@/lib/wholesale";
 
 type Category = { id: string; name: string };
 type ContainerOption = {
@@ -124,6 +125,7 @@ export function ItemForm({
   } | null>(null);
   const [printingLabel, setPrintingLabel] = useState(false);
   const [eurToUsdRate, setEurToUsdRate] = useState(DEFAULT_EUR_TO_USD);
+  const [wholesaleOfNormalPercent, setWholesaleOfNormalPercent] = useState(0);
   const [arrivalOf, setArrivalOf] = useState<string | null>(null);
   const [lotRows, setLotRows] = useState<ItemLot[]>(
     initialLots && initialLots.length > 0
@@ -138,11 +140,6 @@ export function ItemForm({
           },
         ]
   );
-  const [sellWholesale, setSellWholesale] = useState(
-    Number(initial?.wholesaleMinQty || 0) > 0 ||
-      Number(initial?.wholesalePrice || 0) > 0
-  );
-
   useEffect(() => {
     if (mode === "create") {
       barcodeRef.current?.focus();
@@ -150,14 +147,32 @@ export function ItemForm({
   }, [mode]);
 
   useEffect(() => {
+    void fetch("/api/auth/me")
+      .then((res) => res.json())
+      .then((data) => {
+        const pct = Number(data.wholesaleOfNormalPercent);
+        if (Number.isFinite(pct) && pct > 0) setWholesaleOfNormalPercent(pct);
+      })
+      .catch(() => undefined);
     void fetch("/api/settings")
       .then((res) => res.json())
       .then((data) => {
         const rate = Number(data.settings?.eurToUsdRate);
         if (Number.isFinite(rate) && rate > 0) setEurToUsdRate(rate);
+        const pct = Number(data.settings?.wholesaleOfNormalPercent);
+        if (Number.isFinite(pct) && pct > 0) setWholesaleOfNormalPercent(pct);
       })
       .catch(() => undefined);
   }, []);
+
+  useEffect(() => {
+    if (!(wholesaleOfNormalPercent > 0)) return;
+    const ws = wholesaleFromPercent(Number(form.price) || 0, wholesaleOfNormalPercent);
+    if (!(ws > 0)) return;
+    setForm((prev) =>
+      prev.wholesalePrice === String(ws) ? prev : { ...prev, wholesalePrice: String(ws) }
+    );
+  }, [form.price, wholesaleOfNormalPercent]);
 
   function dutyFor(containerId: string, cost: string) {
     if (!containerId) return null;
@@ -238,8 +253,14 @@ export function ItemForm({
     if (!code) return;
 
     if (mode === "create") {
-      const res = await fetch(`/api/products?q=${encodeURIComponent(code)}`);
-      const data = await res.json();
+      let res: Response;
+      try {
+        res = await fetch(`/api/products?q=${encodeURIComponent(code)}`);
+      } catch {
+        setScanHint("Could not reach the store. Keep the barcode and try again.");
+        return;
+      }
+      const data = await res.json().catch(() => ({}));
       const products = (data.products || []) as {
         barcode?: string | null;
         sku?: string | null;
@@ -315,10 +336,6 @@ export function ItemForm({
             customsDuty: "0",
           },
         ]);
-        setSellWholesale(
-          Number(item.wholesaleMinQty || 0) > 0 ||
-            Number(item.wholesalePrice || 0) > 0
-        );
         setError("");
         setScanHint(
           "This item is already in the store. Type how many arrived, the cost, and the customs. A container is optional. Older stock still sells first."
@@ -435,7 +452,6 @@ export function ItemForm({
     setError("");
     setSuccess("");
     if (
-      sellWholesale &&
       Number(form.wholesaleMaxQty || 0) > 0 &&
       Number(form.wholesaleMinQty || 0) > Number(form.wholesaleMaxQty || 0)
     ) {
@@ -466,8 +482,8 @@ export function ItemForm({
       showInPos: form.showInPos,
       trackQty: form.trackQty,
       description: form.description || null,
-      wholesaleMinQty: sellWholesale ? Number(form.wholesaleMinQty || 0) : 0,
-      wholesaleMaxQty: sellWholesale ? Number(form.wholesaleMaxQty || 0) : 0,
+      wholesaleMinQty: Number(form.wholesaleMinQty || 0),
+      wholesaleMaxQty: Number(form.wholesaleMaxQty || 0),
       ...(fullItemForm && !receiving
         ? {
             lots: lotRows.map((lot) => ({
@@ -496,9 +512,9 @@ export function ItemForm({
         lotRows.find((lot) => Number(lot.quantity) > 0) || lotRows[0];
       payload.cost = Number(priced?.cost || 0);
       payload.customsDuty = Number(priced?.customsDuty || 0);
-      payload.wholesalePrice = sellWholesale
-        ? Number(form.wholesalePrice || 0)
-        : 0;
+      payload.wholesalePrice =
+        Number(form.wholesalePrice || 0) ||
+        wholesaleFromPercent(Number(form.price) || 0, wholesaleOfNormalPercent);
       payload.onlinePrice = Number(form.onlinePrice || 0);
       payload.retailPrice = Number(form.retailPrice || 0);
       payload.maxDiscountPercent =
@@ -666,9 +682,9 @@ export function ItemForm({
             Names found — tap the right one
           </div>
           <div className="flex flex-col gap-1">
-            {catalogMatches.map((match) => (
+            {catalogMatches.map((match, index) => (
               <button
-                key={match.name}
+                key={`${match.name}-${index}`}
                 type="button"
                 className="text-left text-xs text-[#174a8c] underline"
                 onClick={() => {
@@ -1040,71 +1056,61 @@ export function ItemForm({
           <fieldset className="desk-fieldset">
             <legend>Wholesale</legend>
             <p className="mb-2 text-[11px] text-slate-500">
-              Most items leave this off. Wholesale for a mixed cart is the %
-              in Preferences, with Max discount % as a cap. Fill a wholesale
-              price only if this item is always a set wholesale amount, not
-              the receipt %.
+              {wholesaleOfNormalPercent > 0
+                ? `Wholesale Price fills from Normal Price × ${wholesaleOfNormalPercent}% (Preferences). Change Normal Price and this number updates. You can still type a different wholesale.`
+                : "Set Wholesale % of normal in Preferences. Then Wholesale Price fills from Normal Price on every item."}
             </p>
-            <label className="mb-2 flex items-center gap-2 text-xs">
-              <input
-                type="checkbox"
-                checked={sellWholesale}
-                onChange={(e) => {
-                  setSellWholesale(e.target.checked);
-                }}
-              />
-              This item can be sold wholesale
-            </label>
-            {sellWholesale ? (
-              <>
-                {fullItemForm ? (
-                  <div className="desk-form-row">
-                    <label htmlFor="wholesale">Wholesale Price (optional)</label>
-                    <input
-                      id="wholesale"
-                      type="number"
-                      step="0.01"
-                      min="0"
-                      value={form.wholesalePrice}
-                      onChange={(e) =>
-                        setField("wholesalePrice", e.target.value)
-                      }
-                    />
-                  </div>
-                ) : null}
-                <div className="desk-form-row">
-                  <label htmlFor="ws-min">Min quantity</label>
-                  <input
-                    id="ws-min"
-                    type="number"
-                    min="0"
-                    value={form.wholesaleMinQty}
-                    onChange={(e) =>
-                      setField("wholesaleMinQty", e.target.value)
-                    }
-                    placeholder=""
-                  />
-                </div>
-                <div className="desk-form-row">
-                  <label htmlFor="ws-max">Max quantity</label>
-                  <input
-                    id="ws-max"
-                    type="number"
-                    min="0"
-                    value={form.wholesaleMaxQty}
-                    onChange={(e) =>
-                      setField("wholesaleMaxQty", e.target.value)
-                    }
-                    placeholder="0 = no max"
-                  />
-                </div>
-                <p className="mt-1 text-[11px] text-slate-500">
-                  In POS the cashier selects this line and presses Fixed WS
-                  Price. That line uses the wholesale price and skips the
-                  receipt %. Min/max quantity apply only then.
-                </p>
-              </>
+            {fullItemForm ? (
+              <div className="desk-form-row">
+                <label htmlFor="wholesale">
+                  Wholesale Price
+                  {wholesaleOfNormalPercent > 0
+                    ? ` (${wholesaleOfNormalPercent}% of normal)`
+                    : ""}
+                </label>
+                <input
+                  id="wholesale"
+                  type="number"
+                  step="0.01"
+                  min="0"
+                  value={form.wholesalePrice}
+                  onChange={(e) =>
+                    setField("wholesalePrice", e.target.value)
+                  }
+                />
+              </div>
             ) : null}
+            <div className="desk-form-row">
+              <label htmlFor="ws-min">Min quantity</label>
+              <input
+                id="ws-min"
+                type="number"
+                min="0"
+                value={form.wholesaleMinQty}
+                onChange={(e) =>
+                  setField("wholesaleMinQty", e.target.value)
+                }
+                placeholder=""
+              />
+            </div>
+            <div className="desk-form-row">
+              <label htmlFor="ws-max">Max quantity</label>
+              <input
+                id="ws-max"
+                type="number"
+                min="0"
+                value={form.wholesaleMaxQty}
+                onChange={(e) =>
+                  setField("wholesaleMaxQty", e.target.value)
+                }
+                placeholder="0 = no max"
+              />
+            </div>
+            <p className="mt-1 text-[11px] text-slate-500">
+              In POS the cashier selects this line and presses Fixed WS
+              Price. That line uses the wholesale price and skips the
+              receipt %. Min/max quantity apply only then.
+            </p>
           </fieldset>
         </div>
 

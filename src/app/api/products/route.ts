@@ -7,7 +7,8 @@ import { jsonMoney } from "@/lib/money";
 import { revalidatePath } from "next/cache";
 import { bustCache } from "@/lib/data-cache";
 import { notifyOwners } from "@/lib/push";
-import { mirrorProductRecord } from "@/lib/catalog-cache";
+import { mirrorProductRecord, readCachedSettings } from "@/lib/catalog-cache";
+import { filledWholesalePrice } from "@/lib/wholesale";
 import {
   parseLotRows,
   refreshProductFromLots,
@@ -59,7 +60,11 @@ export async function POST(request: Request) {
     const price = Number(body.price);
     const cost = Number(body.cost ?? 0);
     const customsDuty = Number(body.customsDuty ?? 0);
-    const wholesalePrice = Number(body.wholesalePrice ?? 0);
+    const wholesalePrice = filledWholesalePrice(
+      price,
+      Number(body.wholesalePrice ?? 0),
+      readCachedSettings()?.wholesaleOfNormalPercent || 0
+    );
     const onlinePrice = Number(body.onlinePrice ?? 0);
     const retailPrice = Number(body.retailPrice ?? 0);
     const maxDiscountPercent = parseMaxDiscount(body.maxDiscountPercent);

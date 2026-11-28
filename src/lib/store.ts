@@ -3,6 +3,7 @@ import { cache } from "react";
 import { prisma } from "./prisma";
 import { toNum } from "./money";
 import { DEFAULT_EUR_TO_USD, DEFAULT_USD_TO_LBP } from "./fx";
+import { loadWholesaleOfNormalPercent } from "./catalog-cache";
 
 const STORE_SETTINGS_TAG = "store-settings";
 
@@ -18,6 +19,7 @@ export type StoreSettingsSnapshot = {
   discAbove5000: number;
   discAbove7000: number;
   discAbove10000: number;
+  wholesaleOfNormalPercent: number;
 };
 
 const fetchStoreSettings = unstable_cache(
@@ -41,9 +43,10 @@ const fetchStoreSettings = unstable_cache(
       discAbove5000: toNum(settings?.discAbove5000 ?? 0),
       discAbove7000: toNum(settings?.discAbove7000 ?? 0),
       discAbove10000: toNum(settings?.discAbove10000 ?? 0),
+      wholesaleOfNormalPercent: await loadWholesaleOfNormalPercent(),
     };
   },
-  ["store-settings-v5"],
+  ["store-settings-v7"],
   { revalidate: 60, tags: [STORE_SETTINGS_TAG] }
 );
 

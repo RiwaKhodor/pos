@@ -18,8 +18,10 @@ import {
   upsertLocalExpense,
   upsertLocalPaymentMethod,
   writeCachedSettings,
+  readCachedSettings,
   type CachedSettings,
 } from "@/lib/catalog-cache";
+import { filledWholesalePrice } from "@/lib/wholesale";
 
 type PendingRow = {
   key: string;
@@ -171,7 +173,11 @@ function applyLocal(op: Pending) {
       barcode: text(body.barcode),
       unit: String(body.unit || existing?.unit || "Pcs"),
       price: Number(body.price ?? existing?.price ?? 0),
-      wholesalePrice: Number(body.wholesalePrice ?? existing?.wholesalePrice ?? 0),
+      wholesalePrice: filledWholesalePrice(
+        Number(body.price ?? existing?.price ?? 0),
+        Number(body.wholesalePrice ?? existing?.wholesalePrice ?? 0),
+        readCachedSettings()?.wholesaleOfNormalPercent || 0
+      ),
       onlinePrice: Number(body.onlinePrice ?? existing?.onlinePrice ?? 0),
       retailPrice: Number(body.retailPrice ?? existing?.retailPrice ?? 0),
       maxDiscountPercent:
@@ -263,12 +269,27 @@ export function reapplyPendingOps() {
 async function replay(op: Pending) {
   const body = op.payload;
   if (op.kind === "settings") {
-    const settings = body as CachedSettings;
+    // The Prisma client may not know this column; write it with raw SQL so the
+    // queued save does not fail forever and keep re-applying an old snapshot.
+    const { wholesaleOfNormalPercent, ...settings } = body as CachedSettings;
     await prisma.storeSettings.upsert({
       where: { id: "default" },
       update: settings,
       create: { id: "default", ...settings },
     });
+    const pct = Number(wholesaleOfNormalPercent);
+    if (Number.isFinite(pct) && pct >= 0) {
+      try {
+        await prisma.$executeRawUnsafe(
+          `ALTER TABLE "StoreSettings" ADD COLUMN IF NOT EXISTS "wholesaleOfNormalPercent" DECIMAL(8,4) NOT NULL DEFAULT 0`
+        );
+      } catch {
+        /* column exists */
+      }
+      await prisma.$executeRawUnsafe(
+        `UPDATE "StoreSettings" SET "wholesaleOfNormalPercent" = ${Math.min(100, pct)} WHERE id = 'default'`
+      );
+    }
     return;
   }
   if (op.kind === "employee.upsert") {
@@ -373,7 +394,11 @@ async function replay(op: Pending) {
       price: Number(body.price || 0),
       cost: Number(body.cost || 0),
       customsDuty: Number(body.customsDuty || 0),
-      wholesalePrice: Number(body.wholesalePrice || 0),
+      wholesalePrice: filledWholesalePrice(
+        Number(body.price || 0),
+        Number(body.wholesalePrice || 0),
+        readCachedSettings()?.wholesaleOfNormalPercent || 0
+      ),
       onlinePrice: Number(body.onlinePrice || 0),
       retailPrice: Number(body.retailPrice || 0),
       maxDiscountPercent:
@@ -508,7 +533,11 @@ export function holdProduct(
     price: Number(body.price ?? existing?.price ?? 0),
     cost: Number(body.cost ?? existing?.cost ?? 0),
     customsDuty: Number(body.customsDuty ?? existing?.customsDuty ?? 0),
-    wholesalePrice: Number(body.wholesalePrice ?? existing?.wholesalePrice ?? 0),
+    wholesalePrice: filledWholesalePrice(
+      Number(body.price ?? existing?.price ?? 0),
+      Number(body.wholesalePrice ?? existing?.wholesalePrice ?? 0),
+      readCachedSettings()?.wholesaleOfNormalPercent || 0
+    ),
     onlinePrice: Number(body.onlinePrice ?? existing?.onlinePrice ?? 0),
     retailPrice: Number(body.retailPrice ?? existing?.retailPrice ?? 0),
     maxDiscountPercent:

@@ -1,3 +1,30 @@
+/** Wholesale = Normal × Preferences % ÷ 100. */
+export function wholesaleFromPercent(normalPrice: number, ofNormalPercent: number) {
+  const pct = Math.min(100, Math.max(0, ofNormalPercent || 0));
+  if (!(pct > 0) || !(normalPrice > 0)) return 0;
+  return Number(((normalPrice * pct) / 100).toFixed(2));
+}
+
+/** Keep a typed wholesale, otherwise fill from Preferences % of Normal. */
+export function filledWholesalePrice(
+  normalPrice: number,
+  givenWholesale: number,
+  ofNormalPercent: number
+) {
+  if (givenWholesale > 0) return givenWholesale;
+  return wholesaleFromPercent(normalPrice, ofNormalPercent);
+}
+
+/** Item wholesale if set, otherwise Preferences % of Normal. */
+export function wholesaleUnitPrice(
+  normalPrice: number,
+  storedWholesale: number,
+  ofNormalPercent: number
+) {
+  if (storedWholesale > 0) return storedWholesale;
+  return wholesaleFromPercent(normalPrice, ofNormalPercent);
+}
+
 export function wholesaleQtyError(
   quantity: number,
   opts: { wholesalePrice: number; wholesaleMinQty: number; wholesaleMaxQty: number }

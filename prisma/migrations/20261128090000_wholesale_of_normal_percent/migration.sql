@@ -1,0 +1,1 @@
+ALTER TABLE "StoreSettings" ADD COLUMN IF NOT EXISTS "wholesaleOfNormalPercent" DECIMAL(8,4) NOT NULL DEFAULT 0;

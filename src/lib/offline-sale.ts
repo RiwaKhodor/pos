@@ -1,5 +1,5 @@
 import { randomUUID } from "crypto";
-import { wholesaleQtyError } from "@/lib/wholesale";
+import { wholesaleQtyError, wholesaleUnitPrice } from "@/lib/wholesale";
 import {
   computeMixedTender,
   DEFAULT_USD_TO_LBP,
@@ -21,6 +21,7 @@ import {
   percentsFromSettings,
   tierPercent,
   unitPriceFor,
+  volumeDiscountApplies,
   volumePercentForAmount,
   type PricingMode,
 } from "@/lib/price-tiers";
@@ -170,9 +171,15 @@ export function completeSaleLocally(input: {
       if (product.trackQty && product.stock < quantity) {
         throw new Error(`INSUFFICIENT_STOCK:${product.name}`);
       }
-      const wholesale = product.wholesalePrice;
+      const wholesale = wholesaleUnitPrice(
+        product.price,
+        product.wholesalePrice,
+        settings.wholesaleOfNormalPercent || 0
+      );
       const useFixedWholesale = Boolean(
-        item.useFixedWholesale && wholesale > 0
+        (item.useFixedWholesale ||
+          (input.pricingMode === "WHOLESALE" && item.useFixedWholesale !== false)) &&
+          wholesale > 0
       );
       if (useFixedWholesale) {
         const qtyErr = wholesaleQtyError(quantity, {
@@ -216,12 +223,11 @@ export function completeSaleLocally(input: {
         .reduce((sum, line) => sum + line.lineTotal, 0)
         .toFixed(2)
     );
-    const tierPct =
-      input.pricingMode === "WHOLESALE_PCT"
-        ? volumePercentForAmount(discountable, percents)
-        : skipDiscount.size === lineItems.length
-          ? 0
-          : tierPercent(input.pricingMode, percents);
+    const tierPct = volumeDiscountApplies(input.pricingMode)
+      ? volumePercentForAmount(discountable, percents)
+      : skipDiscount.size === lineItems.length
+        ? 0
+        : tierPercent(input.pricingMode, percents);
     let discount = 0;
     if (tierPct > 0) {
       discount = discountForLines(

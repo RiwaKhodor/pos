@@ -77,20 +77,18 @@ function parseAnswer(text: string): WebProduct | null {
   }
 }
 
-async function runSearch(barcode: string, hint: string): Promise<WebProduct | null> {
+/** Run Claude with live web search and return its final text ("" on failure). */
+async function searchWeb(
+  system: string,
+  prompt: string,
+  options: { allowedDomains?: string[]; maxUses?: number } = {}
+): Promise<string> {
   const key = apiKey();
-  if (!key) return null;
+  if (!key) return "";
   const client = new Anthropic({ apiKey: key, timeout: 90_000, maxRetries: 1 });
   const model = process.env.CLAUDE_SEARCH_MODEL || "claude-opus-5-5";
 
-  const messages: Anthropic.Beta.BetaMessageParam[] = [
-    {
-      role: "user",
-      content: hint
-        ? `Barcode (EAN/GTIN): ${barcode}\nA catalog suggested this name, which may be wrong or incomplete: ${hint}`
-        : `Barcode (EAN/GTIN): ${barcode}`,
-    },
-  ];
+  const messages: Anthropic.Beta.BetaMessageParam[] = [{ role: "user", content: prompt }];
 
   try {
     // Web search runs server-side; a long search can pause the turn, so resume a few times.
@@ -98,7 +96,7 @@ async function runSearch(barcode: string, hint: string): Promise<WebProduct | nu
       const response = await client.beta.messages.create({
         model,
         max_tokens: 16000,
-        system: SYSTEM,
+        system,
         output_config: { effort: "low" },
         betas: ["server-side-fallback-2026-07-01"],
         fallbacks: "default",
@@ -106,8 +104,9 @@ async function runSearch(barcode: string, hint: string): Promise<WebProduct | nu
           {
             type: "web_search_20260209",
             name: "web_search",
-            max_uses: 6,
+            max_uses: options.maxUses ?? 6,
             user_location: { type: "approximate", country: "DE" },
+            ...(options.allowedDomains ? { allowed_domains: options.allowedDomains } : {}),
           },
         ],
         messages,
@@ -117,15 +116,14 @@ async function runSearch(barcode: string, hint: string): Promise<WebProduct | nu
         messages.push({ role: "assistant", content: response.content });
         continue;
       }
-      if (response.stop_reason === "refusal") return null;
+      if (response.stop_reason === "refusal") return "";
 
-      const text = response.content
+      return response.content
         .filter((block): block is Anthropic.Beta.BetaTextBlock => block.type === "text")
         .map((block) => block.text)
         .join("\n");
-      return parseAnswer(text);
     }
-    return null;
+    return "";
   } catch (error) {
     if (error instanceof Anthropic.AuthenticationError) {
       console.error("[barcode web lookup] Anthropic API key was rejected.");
@@ -136,8 +134,68 @@ async function runSearch(barcode: string, hint: string): Promise<WebProduct | nu
     } else {
       console.error("[barcode web lookup] failed:", error);
     }
+    return "";
+  }
+}
+
+async function runSearch(barcode: string, hint: string): Promise<WebProduct | null> {
+  const prompt = hint
+    ? `Barcode (EAN/GTIN): ${barcode}\nA catalog suggested this name, which may be wrong or incomplete: ${hint}`
+    : `Barcode (EAN/GTIN): ${barcode}`;
+  return parseAnswer(await searchWeb(SYSTEM, prompt));
+}
+
+const DM_SYSTEM = `You find the current price of a product on dm.de, the website of the German drugstore dm.
+Search dm.de for the barcode (EAN/GTIN) and, if needed, the product name. dm product page URLs end in "-p<EAN>.html", so a page for barcode 4066447745443 ends in "-p4066447745443.html".
+Only report a price shown on dm.de for this exact product and pack size. Use the normal shelf price for one unit, not a "per liter" or "per kg" base price and not a multi-pack.
+
+Reply with ONE JSON object and nothing else:
+{"priceEur": null, "sourceUrl": "", "name": ""}
+- priceEur: the dm.de price in euros as a number (e.g. 2.45), or null if dm.de does not show this product or a price.
+- sourceUrl: the dm.de page you used.
+- name: the product name as dm.de shows it.`;
+
+export type DmPrice = { priceEur: number; sourceUrl?: string };
+
+const dmCache = new Map<string, { at: number; value: Promise<DmPrice | null> }>();
+
+async function runDmSearch(barcode: string, name: string): Promise<DmPrice | null> {
+  const prompt = name
+    ? `Barcode (EAN/GTIN): ${barcode}\nProduct name: ${name}`
+    : `Barcode (EAN/GTIN): ${barcode}`;
+  const text = await searchWeb(DM_SYSTEM, prompt, { allowedDomains: ["dm.de"], maxUses: 3 });
+  const candidates = text.match(/\{[^{}]*"priceEur"[^{}]*\}/g);
+  const raw = candidates?.[candidates.length - 1];
+  if (!raw) return null;
+  try {
+    const data = JSON.parse(raw) as Record<string, unknown>;
+    const priceEur = parsePrice(data.priceEur);
+    if (!priceEur) return null;
+    const sourceUrl = cleanText(data.sourceUrl);
+    // Only accept a price taken from a dm.de page.
+    if (sourceUrl && !/^https?:\/\/(www\.)?dm\.de\//i.test(sourceUrl)) return null;
+    return { priceEur, sourceUrl: sourceUrl || undefined };
+  } catch {
     return null;
   }
+}
+
+/**
+ * The dm.de shelf price for this barcode, read through Claude's web search limited to dm.de.
+ * Cached for 10 minutes per barcode.
+ */
+export function lookupDmPriceOnWeb(barcode: string, name = ""): Promise<DmPrice | null> {
+  const digits = barcode.replace(/\D/g, "");
+  if (digits.length < 8 || !apiKey()) return Promise.resolve(null);
+  const now = Date.now();
+  for (const [code, entry] of dmCache) {
+    if (now - entry.at > CACHE_MS) dmCache.delete(code);
+  }
+  const hit = dmCache.get(digits);
+  if (hit) return hit.value;
+  const value = runDmSearch(digits, cleanText(name));
+  dmCache.set(digits, { at: now, value });
+  return value;
 }
 
 /**

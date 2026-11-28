@@ -7,7 +7,11 @@ import { invalidateStoreNameCache } from "@/lib/store";
 import { setStoreNameCookie } from "@/lib/store-cookie";
 import { DEFAULT_EUR_TO_USD, DEFAULT_USD_TO_LBP } from "@/lib/fx";
 import { RECEIPT_PHONE } from "@/lib/store-info";
-import { readCachedSettings, writeCachedSettings } from "@/lib/catalog-cache";
+import {
+  loadWholesaleOfNormalPercent,
+  readCachedSettings,
+  writeCachedSettings,
+} from "@/lib/catalog-cache";
 import { isDbUnavailable } from "@/lib/db-unavailable";
 import { queueOp, dropOp } from "@/lib/offline-ops";
 import { syncPendingSales } from "@/lib/sync-sales";
@@ -24,10 +28,12 @@ export async function GET() {
         data: { id: "default" },
       });
     }
+    const wholesaleOfNormalPercent = await loadWholesaleOfNormalPercent();
     return jsonMoney({
       settings: {
         ...settings,
         addItemPasswordHash: undefined,
+        wholesaleOfNormalPercent,
       },
     });
   } catch (error) {
@@ -62,6 +68,15 @@ export async function PUT(request: Request) {
       discAbove7000: percent(body.discAbove7000),
       discAbove10000: percent(body.discAbove10000),
     };
+    // Empty / missing means "keep what is saved" — never silently reset to 0.
+    const rawWs = body.wholesaleOfNormalPercent;
+    const wholesaleOfNormalPercent =
+      rawWs === undefined ||
+      rawWs === null ||
+      String(rawWs).trim() === "" ||
+      !Number.isFinite(Number(rawWs))
+        ? await loadWholesaleOfNormalPercent()
+        : percent(rawWs);
 
     const cached = readCachedSettings();
     let storedAddress = cached?.address ?? null;
@@ -91,6 +106,7 @@ export async function PUT(request: Request) {
       phone: body.phone ? String(body.phone).trim() : RECEIPT_PHONE,
       receiptFooter: body.receiptFooter ? String(body.receiptFooter) : null,
       ...discounts,
+      wholesaleOfNormalPercent,
     };
     writeCachedSettings(snapshot);
 
@@ -101,13 +117,28 @@ export async function PUT(request: Request) {
     } catch {
       /* column exists, or database is offline */
     }
+    try {
+      await prisma.$executeRawUnsafe(
+        `ALTER TABLE "StoreSettings" ADD COLUMN IF NOT EXISTS "wholesaleOfNormalPercent" DECIMAL(8,4) NOT NULL DEFAULT 0`
+      );
+    } catch {
+      /* column exists, or database is offline */
+    }
 
     try {
+      const { wholesaleOfNormalPercent: _ws, ...dbFields } = snapshot;
       await prisma.storeSettings.upsert({
         where: { id: "default" },
-        update: snapshot,
-        create: { id: "default", ...snapshot },
+        update: dbFields,
+        create: { id: "default", ...dbFields },
       });
+      try {
+        await prisma.$executeRawUnsafe(
+          `UPDATE "StoreSettings" SET "wholesaleOfNormalPercent" = ${Number(wholesaleOfNormalPercent)} WHERE id = 'default'`
+        );
+      } catch {
+        /* column missing until ALTER above succeeds */
+      }
       dropOp("settings:default");
     } catch (error) {
       if (!isDbUnavailable(error)) throw error;
@@ -118,7 +149,7 @@ export async function PUT(request: Request) {
     bustCache("settings");
     notifyOwners({
       title: "Preferences updated",
-      body: `${storeName}: tax ${snapshot.taxRate}% · L.L ${usdToLbpRate} · € ${eurToUsdRate} · discounts ${discounts.discAbove500}% / ${discounts.discAbove1000}% / ${discounts.discAbove3000}% / ${discounts.discAbove5000}% / ${discounts.discAbove7000}% / ${discounts.discAbove10000}%`,
+      body: `${storeName}: tax ${snapshot.taxRate}% · L.L ${usdToLbpRate} · € ${eurToUsdRate} · WS ${wholesaleOfNormalPercent}% of normal · discounts ${discounts.discAbove500}% / ${discounts.discAbove1000}% / ${discounts.discAbove3000}% / ${discounts.discAbove5000}% / ${discounts.discAbove7000}% / ${discounts.discAbove10000}%`,
       url: "/owner",
       tag: `settings:${Date.now()}`,
     });

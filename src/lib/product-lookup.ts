@@ -1,7 +1,7 @@
 import { searchCatalog } from "@/lib/catalog-cache";
 import { localDb } from "@/lib/local-db";
 import { roundMoney } from "@/lib/fx";
-import { lookupBarcodeOnWeb, type WebProduct } from "@/lib/claude-web-lookup";
+import { lookupBarcodeOnWeb, lookupDmPriceOnWeb, type WebProduct } from "@/lib/claude-web-lookup";
 import { expandUpcE, gtinFromGs1, isValidGtin } from "@/lib/gtin";
 
 const UA = "VANO-POS/0.1.23 (store product lookup)";
@@ -13,6 +13,8 @@ type CatalogHit = {
   description: string;
   trusted?: boolean;
   priceEur?: number;
+  /** Cost is only filled when the barcode is a dm.de product. */
+  source?: "dm";
 };
 
 const OFF_HOSTS = [
@@ -213,11 +215,22 @@ function extractSize(...texts: Array<unknown>) {
 }
 
 function firstBrand(raw: unknown) {
-  const text = cleanText(raw).split(/[,;/|]/)[0].trim();
+  let text = cleanText(raw).split(/[,;/|]/)[0].trim();
+  text = text.replace(/\bnaturkosmetik\b/gi, " ").replace(/\s+/g, " ").trim();
   if (!text || text.length < 2 || text.length > 42) return "";
   if (/^(unknown|n\/a|none|null|brand|marke|hersteller|unbranded)$/i.test(text)) return "";
   if (/\d{8,}/.test(text)) return "";
   return text;
+}
+
+/** Split glued shop titles and drop German marketing tags before English. */
+function normalizeShopTitle(name: string) {
+  let text = cleanText(name);
+  text = text.replace(/([A-ZÄÖÜ]{3,})([A-ZÄÖÜ][a-zäöüß])/g, "$1 $2");
+  text = text.replace(/([a-zäöüß])([A-ZÄÖÜ])/g, "$1 $2");
+  text = text.replace(/\bnaturkosmetik\b/gi, " ");
+  text = text.replace(/\b(\S+)(\s+\1)+\b/gi, "$1");
+  return cleanText(text);
 }
 
 function withBrandInName(name: string, brand: string) {
@@ -237,7 +250,7 @@ function withSizeInName(name: string, size: string) {
 }
 
 function englishProductName(name: string) {
-  let text = cleanText(name).replace(/_/g, " ");
+  let text = normalizeShopTitle(name).replace(/_/g, " ");
   text = text.replace(/\(\s*(dm|rossmann|müller|mueller|aldi|lidl|obi|hornbach|bauhaus|primark|action)\s*\)/gi, "");
   const swaps: Array<[RegExp, string]> = [
     [/\bnatürliches mineralwasser\b/gi, "Natural Mineral Water"],
@@ -286,6 +299,52 @@ function englishProductName(name: string) {
     [/\bmundspuelung\b/gi, "Mouthwash"],
     [/\bmundwasser\b/gi, "Mouthwash"],
     [/\blippenpflege\b/gi, "Lip Balm"],
+    [/\blippenbalsam\b/gi, "Lip Balm"],
+    [/\blippenstift\b/gi, "Lipstick"],
+    [/\blippenöl\b/gi, "Lip Oil"],
+    [/\blippenoel\b/gi, "Lip Oil"],
+    [/\blipgloss\b/gi, "Lip Gloss"],
+    [/\bflüssigseife\b/gi, "Liquid Soap"],
+    [/\bfluessigseife\b/gi, "Liquid Soap"],
+    [/\bhandseife\b/gi, "Hand Soap"],
+    [/\bkernseife\b/gi, "Bar Soap"],
+    [/\bnachfüllpack\b/gi, "Refill"],
+    [/\bnachfuellpack\b/gi, "Refill"],
+    [/\bnachfüllbeutel\b/gi, "Refill Pouch"],
+    [/\bgesichtsmaske\b/gi, "Face Mask"],
+    [/\btuchmaske\b/gi, "Sheet Mask"],
+    [/\bhaarmaske\b/gi, "Hair Mask"],
+    [/\btrockenshampoo\b/gi, "Dry Shampoo"],
+    [/\banti[- ]?pickel\b/gi, "Pimple"],
+    [/\bpickel\b/gi, "Pimple"],
+    [/\bkopfhaut\b/gi, "Scalp"],
+    [/\bultra[- ]?sensitiv\b/gi, "Ultra Sensitive"],
+    [/\bsensitiv\b/gi, "Sensitive"],
+    [/\bmaxi[- ]?binden\b/gi, "Maxi Pads"],
+    [/\bultra[- ]?binden\b/gi, "Ultra Pads"],
+    [/\bbinden\b/gi, "Pads"],
+    [/\bslipeinlagen\b/gi, "Panty Liners"],
+    [/\bmüllbeutel\b/gi, "Trash Bags"],
+    [/\bmuellbeutel\b/gi, "Trash Bags"],
+    [/\bmüllsack\b/gi, "Trash Bags"],
+    [/\beinmal[- ]?handschuhe\b/gi, "Disposable Gloves"],
+    [/\blatexfrei\b/gi, "latex-free"],
+    [/\bfusselroller\b/gi, "Lint Roller"],
+    [/\bgeschenkset\b/gi, "Gift Set"],
+    [/\badventskalender\b/gi, "Advent Calendar"],
+    [/\bzahncreme\b/gi, "Toothpaste"],
+    [/\bkinder\b/gi, "Kids"],
+    [/\beukalyptus\b/gi, "Eucalyptus"],
+    [/\bbergamotte\b/gi, "Bergamot"],
+    [/\bmelisse\b/gi, "Melissa"],
+    [/\bminze\b/gi, "Mint"],
+    [/\bvanille\b/gi, "Vanilla"],
+    [/\bzitrone\b/gi, "Lemon"],
+    [/\btragegriff\b/gi, "with handles"],
+    [/\breinigungstücher\b/gi, "Cleansing Wipes"],
+    [/\breinigungstuecher\b/gi, "Cleansing Wipes"],
+    [/\bwattepads\b/gi, "Cotton Pads"],
+    [/\bhydrokolloid\b/gi, "Hydrocolloid"],
     [/\bkräuter\b/gi, "Herbs"],
     [/\bantibakterielle[nrs]?\b/gi, "Antibacterial"],
     [/\bantibakteriell\b/gi, "Antibacterial"],
@@ -368,7 +427,14 @@ function englishProductName(name: string) {
     [/\b(\d+)\s*fach\b/gi, "$1-panel"],
     [/\btyp\s+(\d+)\b/gi, "Type $1"],
     [/\bb\s*x\s*h\s*:/gi, "W x H:"],
-    [/\bmit\b/gi, "with"],
+    [/\bfarb\s*&\s*schmutzfangt(?:ü|ue)cher\b/gi, "Colour Catcher Sheets"],
+    [/\bfarb[- ]und[- ]schmutzfangt(?:ü|ue)cher\b/gi, "Colour Catcher Sheets"],
+    [/\bschmutzfangt(?:ü|ue)cher\b/gi, "Dirt Catcher Sheets"],
+    [/\bfarbfangt(?:ü|ue)cher\b/gi, "Colour Catcher Sheets"],
+    [/\bdesinfektionsspray\b/gi, "Disinfectant Spray"],
+    [/\bwaschmaschinenreiniger\b/gi, "Washing Machine Cleaner"],
+    [/\bfarb[- ]?&[- ]?schmutz/gi, "Colour and Dirt"],
+    [/(\s)mit(\s)/gi, "$1with$2"],
     [/\bschwangerschafts[- ]?pflegeöl\b/gi, "Pregnancy Care Oil"],
     [/\bschwangerschaftsöl\b/gi, "Pregnancy Care Oil"],
     [/\bschwangerschafts[- ]?pflegecreme\b/gi, "Pregnancy Care Cream"],
@@ -383,6 +449,7 @@ function englishProductName(name: string) {
   text = text.replace(/\b(\d+(?:[.,]\d+)?)\s*[x×]\s*(\d+(?:[.,]\d+)?)\s*mm\b/gi, "$1x$2 mm");
   text = text.replace(/\bdin\b/gi, "DIN");
   text = text.replace(/\b(\d+)\s*st\.?\b/gi, "$1 pc");
+  text = text.replace(/\b(\d+),(\d+)\s*(ml|g|kg|l|cl)\b/gi, "$1.$2 $3");
   text = text.replace(/\s*,\s*,+/g, ",");
   text = text.replace(
     /\b(Shower Gel|Shampoo|Soap|Body Cream|Hand Cream|Deodorant)\s+(Cucumber|Rose|Lemon|Strawberry|Milk|Aloe|Coconut|Vanilla|Mint)\b/gi,
@@ -405,7 +472,7 @@ function englishProductName(name: string) {
 function compactProductName(name: string) {
   const text = cleanText(name);
   if (
-    /\b(stainless steel|watts|coffee grinder|air fryer|wood screw|hex bolt|universal screw|galvanized|pcs|full thread|countersunk|mouthwash|ice cube|silicone|cream in a tin)\b/i.test(
+    /\b(stainless steel|watts|coffee grinder|air fryer|wood screw|hex bolt|universal screw|galvanized|pcs|full thread|countersunk|mouthwash|ice cube|silicone|cream in a tin|lip balm|shower gel|toothpaste)\b/i.test(
       text
     ) &&
     /,/.test(text)
@@ -422,7 +489,10 @@ function compactProductName(name: string) {
 function specificItemName(name: string, brand = "", size = "") {
   return withSizeInName(
     compactProductName(
-      withBrandInName(englishProductName(shortItemName(name) || name), firstBrand(brand))
+      withBrandInName(
+        englishProductName(shortItemName(normalizeShopTitle(name)) || name),
+        firstBrand(brand)
+      )
     ),
     size
   );
@@ -432,9 +502,19 @@ function looksGerman(text: string) {
   const t = cleanText(text);
   if (!t) return false;
   if (/[äöüßÄÖÜ]/.test(t)) return true;
-  return /\b(und|ohne|für|vom|zur|beim|einer|einem|heizk(?:ö|oe)rper|flachheiz|plattenheiz|schraube|schrauben|duschgel|mundspül|zahnpasta|k(?:ö|oe)rper|pflege|waschmittel|st(?:ü|ue)ck|bohrer|d(?:ü|ue)bel|aufh(?:ä|ae)nge|laschen|typ\s+\d+|mit\s+\S+)/i.test(
+  return /\b(und|oder|ohne|für|vom|zur|beim|einer|einem|bestellen|kaufen|warenkorb|kategorie|heizk(?:ö|oe)rper|flachheiz|plattenheiz|schraube|schrauben|duschgel|dusch|lippen|balsam|naturkosmetik|flüssig|fluessig|nachfüll|nachfuell|seife|mundspül|zahnpasta|zahncreme|k(?:ö|oe)rper|pflege|waschmittel|waschgel|gesicht|maske|binden|müll|muell|handschuh|fussel|tücher|tuecher|fangtücher|fangtuecher|schmutz|desinfektion|waschmaschine|spülung|spuelung|kinder|festes|sensitiv|inhaltsstoffe|st(?:ü|ue)ck|bohrer|d(?:ü|ue)bel|aufh(?:ä|ae)nge|laschen|typ\s+\d+|creme|öl|oel)\b/i.test(
     t
   );
+}
+
+/** Balkan / Slavic / leftover shop titles that must not beat dm English. */
+function looksWrongLanguage(text: string) {
+  const t = cleanText(text);
+  if (!t) return false;
+  if (/[а-яА-ЯіІїЇєЄ]/.test(t)) return true;
+  return /\b(maramice|upijanje|boja|za pranje|teku[cć]ina|krema|šampon|sampon|pasta za zube|pasta do|z[eę]b[oó]w|zmywarki|tabletki|płyn|plyn|ręcznik|chusteczki|dentifrice|liquide vaisselle|cr[eè]me de soin|pour le|pour les)\b/i.test(
+    t
+  ) || /\b\d+\s*kom\b/i.test(t);
 }
 
 const nameTranslationCache = new Map<string, string>();
@@ -458,7 +538,7 @@ async function translateGermanName(name: string, brand: string) {
     ? source.replace(new RegExp(kept.replace(/[.*+?^${}()|[\]\\]/g, "\\$&"), "ig"), "ZZBRANDZZ")
     : source;
   const apply = (raw: string) => {
-    const translated = restoreBrand(raw, kept);
+    const translated = englishProductName(restoreBrand(raw, kept));
     if (!translated || isJunkName(translated) || translated.length > 140) return "";
     return translated;
   };
@@ -516,11 +596,61 @@ async function translateGermanName(name: string, brand: string) {
   return source;
 }
 
+async function translateAnyName(name: string, brand: string) {
+  const source = cleanText(name);
+  if (!source) return source;
+  const kept = firstBrand(brand) || "";
+  const cacheKey = `auto::${kept}::${source.toLowerCase()}`;
+  const cached = nameTranslationCache.get(cacheKey);
+  if (cached) return cached;
+  const payload = kept
+    ? source.replace(new RegExp(kept.replace(/[.*+?^${}()|[\]\\]/g, "\\$&"), "ig"), "ZZBRANDZZ")
+    : source;
+  const apply = (raw: string) => {
+    const translated = englishProductName(restoreBrand(raw, kept));
+    if (!translated || isJunkName(translated) || translated.length > 140) return "";
+    return translated;
+  };
+  try {
+    const res = await fetch(
+      `https://translate.googleapis.com/translate_a/single?client=gtx&sl=auto&tl=en&dt=t&q=${encodeURIComponent(
+        payload
+      )}`,
+      { headers: { "User-Agent": BROWSER_UA }, signal: AbortSignal.timeout(5000), cache: "no-store" }
+    );
+    if (res.ok) {
+      const json = (await res.json()) as unknown;
+      const chunks = Array.isArray(json) && Array.isArray(json[0]) ? json[0] : [];
+      const text = chunks
+        .map((row) => (Array.isArray(row) ? String(row[0] || "") : ""))
+        .join("");
+      const done = apply(text);
+      if (done && !looksGerman(done) && !looksWrongLanguage(done)) {
+        nameTranslationCache.set(cacheKey, done);
+        return done;
+      }
+    }
+  } catch {
+    /* fall through */
+  }
+  return source;
+}
+
 async function englishShopName(name: string, brand = "", size = "") {
-  const local = specificItemName(name, brand, size);
-  if (!looksGerman(local)) return local;
-  const translated = await translateGermanName(name, brand);
-  return specificItemName(translated || local, brand, size);
+  let current = specificItemName(name, brand, size);
+  if (looksWrongLanguage(current) && !looksGerman(current)) {
+    const translated = await translateAnyName(current, firstBrand(brand));
+    current = specificItemName(translated || current, brand, size);
+  }
+  if (looksGerman(current)) {
+    const translated = await translateGermanName(current, firstBrand(brand));
+    current = specificItemName(translated || current, brand, size);
+  }
+  if (looksGerman(current)) {
+    const translated = await translateAnyName(current, firstBrand(brand));
+    current = specificItemName(translated || current, brand, size);
+  }
+  return current;
 }
 
 function shortItemName(name: string) {
@@ -622,6 +752,11 @@ function guessKind(name: string) {
     [/\b(coffee machine|kaffeemaschine)\b/, "a coffee machine"],
     [/\b(seife|soap)\b/, "a soap"],
     [/\b(zahnpasta|toothpaste)\b/, "a toothpaste"],
+    [/\b(lip balm|lippenbalsam|lippenpflege)\b/, "a lip balm"],
+    [/\b(colour catcher|color catcher|schmutzfang)\b/, "colour-catcher laundry sheets"],
+    [/\b(disinfectant spray|desinfektionsspray)\b/, "a disinfectant spray"],
+    [/\b(washing machine cleaner|waschmaschinenreiniger)\b/, "a washing machine cleaner"],
+    [/\b(lipstick|lippenstift)\b/, "a lipstick"],
     [/\b(waschmittel|laundry detergent|detergent)\b/, "a laundry detergent"],
     [/\b(spülmittel|spuelmittel|dishwashing)\b/, "a dishwashing liquid"],
     [/\b(kaffee|coffee)\b/, "a coffee product"],
@@ -719,7 +854,7 @@ function guessUse(name: string, kind: string, category: string) {
   if (/pasta|rice|flour|sugar|salt/.test(text)) {
     return "Cook or use as written on the pack.";
   }
-  if (/cream|lotion|deo|toothpaste/.test(text)) {
+  if (/cream|lotion|deo|toothpaste|lip balm|lipstick/.test(text)) {
     return "Keep the lid closed after use.";
   }
   return "";
@@ -855,7 +990,7 @@ export function clearEnglishDescription(name: string, raw = "") {
 
 function hitLooksWeak(name: string) {
   const text = cleanText(name);
-  if (!text || isJunkName(text)) return true;
+  if (!text || isJunkName(text) || looksWrongLanguage(text)) return true;
   if (/\bwith\s+\d+$/i.test(text) || /\bmit\s+\d+$/i.test(text)) return true;
   if (/^(understanding|discover|explore|learn|why|how|what|when|where|via)\b/i.test(text)) return true;
   return /\b(n\/d|s\/m|gel de banho|gel de ba[nñ]o|gel bagno|cx\.?\s*\d+|caja de|your clothes|in your|thinkpad|hoteudeals|kingston sub|october 19|in october)\b/i.test(
@@ -865,7 +1000,11 @@ function hitLooksWeak(name: string) {
 
 function hitsAreStrong(hits: CatalogHit[]) {
   return hits.some(
-    (hit) => hit.trusted && !hitLooksWeak(hit.name) && germanScore(hit) >= 50
+    (hit) =>
+      hit.trusted &&
+      !hitLooksWeak(hit.name) &&
+      !looksWrongLanguage(hit.name) &&
+      germanScore(hit) >= 50
   );
 }
 
@@ -967,8 +1106,14 @@ function germanScore(hit: CatalogHit) {
   const text = `${hit.name} ${hit.description}`;
   let score = 40 - Math.abs(hit.name.length - 36);
   if (hit.trusted) score += 80;
+  if (hit.priceEur && hit.priceEur > 0) score += 90;
+  if (looksWrongLanguage(hit.name)) score -= 200;
+  if (looksGerman(hit.name)) score -= 40;
+  if (/online bestellen|in the category|sunny isle|\bcena\b/i.test(hit.name)) {
+    score -= 200;
+  }
   if (
-    /\b(shower gel|shampoo|conditioner|toothpaste|body cream|hand cream|deodorant|bubble bath|shaving foam|shaving cream|body wash|mineral water|air fryer|coffee grinder|coffee machine|kettle|lip balm|hex bolt|wood screw|universal screw|mouthwash|ice cube|cream in a tin|panel radiator|radiator)\b/i.test(
+    /\b(shower gel|shampoo|conditioner|toothpaste|body cream|hand cream|deodorant|bubble bath|shaving foam|shaving cream|body wash|mineral water|air fryer|coffee grinder|coffee machine|kettle|lip balm|hex bolt|wood screw|universal screw|mouthwash|ice cube|cream in a tin|panel radiator|radiator|colour catcher|color catcher|disinfectant|washing machine)\b/i.test(
       hit.name
     )
   ) {
@@ -1023,6 +1168,39 @@ function isPricedOfferName(name: string) {
   return (
     /€|eur\b|wochenangebote|\d+,\d+\s*€|\/\s*(kg|m2|st|l)\b|\d+\s*von\s*\d+/i.test(name)
   );
+}
+
+/** Shop buttons, category blurbs, search pages, comparison-site leftovers. */
+function isJunkTitle(name: string) {
+  const t = cleanText(name);
+  if (!t) return true;
+  if (/^(this|the)\s+product\b/i.test(t)) return true;
+  if (/\b(this product is|is in the category|in the category|belongs to the|was found in)\b/i.test(t)) {
+    return true;
+  }
+  if (/["“”«»].{0,48}(category|kategorie|kategoria)/i.test(t)) return true;
+  if (
+    /\b(online bestellen|jetzt kaufen|jetzt entdecken|in den warenkorb|in den korb|add to (?:bag|cart|basket)|buy now|shop now|order now|order online|click here|learn more|read more|gratis versand|kostenloser versand)\b/i.test(
+      t
+    )
+  ) {
+    return true;
+  }
+  if (/\b(preisvergleich|lowest price|best price|zum besten preis|ab \d|nur heute)\b/i.test(t)) {
+    return true;
+  }
+  if (/[•|·]\s*(cena|preis|price|kaufen)\b/i.test(t) || /\b(cena|prezzo)\s*[:.]/i.test(t)) {
+    return true;
+  }
+  if (/\bz\s*(de|pl|nl|at|cz)\b/i.test(t)) return true;
+  if (/^\s*(category|kategorie|kategoria|ergebnis|treffer|results?)\b/i.test(t)) return true;
+  if (/\b(results? for|treffer für|ergebnisse für|suche nach)\b/i.test(t)) return true;
+  if (/^\d+\s*(ergebnis|treffer|results?)\b/i.test(t)) return true;
+  if (/[.!?]$/.test(t) && t.split(/\s+/).length >= 6) return true;
+  if ((t.match(/["“”]/g) || []).length >= 2 && /\b(category|product|toothpaste)\b/i.test(t)) {
+    return true;
+  }
+  return false;
 }
 
 function codesMatch(found: string, expected: string) {
@@ -1084,14 +1262,16 @@ function isJunkName(name: string) {
   if (!text || text.length < 3 || text.length > 140) return true;
   if (/\?/.test(text)) return true;
   if (/^\d+$/.test(text)) return true;
+  if (isJunkTitle(text)) return true;
   if (
     /\b(ean|upc|isbn|gtin)\b/i.test(text) &&
     /search|suche|recherche|lookup|database|datenbank|finder|code/i.test(text)
   ) {
     return true;
   }
+  if (looksWrongLanguage(text)) return true;
   if (
-    /just a moment|attention required|verifizierung|checking if the site|unusual traffic|too many requests|no page for this barcode|wholesale joblot|bestseller|alle produkte|alle entfernen|direkt zum inhalt|suchergebnisse|1 ergebnis|filtern und sortieren|testbericht|allegro|dauerhaft g(?:ü|ue)nstig|client challenge|spare \d+\s*%|gutes für alle|startseite|^suche$|^search$|^home$|^shop$|wochenangebote|was suchen sie/i.test(
+    /just a moment|attention required|verifizierung|checking if the site|unusual traffic|too many requests|no page for this barcode|wholesale joblot|bestseller|alle produkte|alle entfernen|direkt zum inhalt|suchergebnisse|1 ergebnis|filtern und sortieren|testbericht|allegro|merkandi|dauerhaft g(?:ü|ue)nstig|client challenge|spare \d+\s*%|gutes für alle|startseite|^suche$|^search$|^home$|^shop$|wochenangebote|was suchen sie/i.test(
       text
     )
   ) {
@@ -1603,7 +1783,8 @@ function drugstoreHit(
   size: string,
   ingredients: string,
   extra = "",
-  priceEur = 0
+  priceEur = 0,
+  source?: "dm"
 ): CatalogHit | null {
   const fullName = specificItemName(name, brand, size);
   if (!fullName || isJunkName(fullName) || hitLooksWeak(fullName)) return null;
@@ -1619,7 +1800,8 @@ function drugstoreHit(
       ])
     ),
     trusted: true,
-    priceEur: priceEur > 0 ? priceEur : undefined,
+    source,
+    priceEur: source === "dm" && priceEur > 0 ? priceEur : undefined,
   };
 }
 
@@ -1720,7 +1902,15 @@ async function hitFromDmProduct(
     const markdown = await fetchMarkdown(`https://www.dm.de${self}`, 8000);
     ingredients = ingredientsFromMarkdown(markdown);
   }
-  return drugstoreHit(name, brand, size, ingredients, "", dmPriceFromProduct(product));
+  return drugstoreHit(
+    name,
+    brand,
+    size,
+    ingredients,
+    "",
+    dmPriceFromProduct(product),
+    "dm"
+  );
 }
 
 async function lookupDm(code: string): Promise<CatalogHit | null> {
@@ -1952,39 +2142,10 @@ async function priceFromRetailSearch(code: string, name: string) {
   return pickEuroPrice(amounts);
 }
 
-async function findEuroPrice(code: string, name: string) {
-  const shortName = cleanText(name);
-  const dmQueries = [
-    code,
-    shortName,
-    shortName ? shortName.split(/\s+/).slice(0, 6).join(" ") : "",
-  ].filter((query, index, all) => query && all.indexOf(query) === index);
-  const results = await Promise.allSettled([
-    ...dmQueries.map((query) => lookupDmByName(query, code)),
-    priceFromShopWeb(code, shortName),
-    lookupComparePrice(code, shortName),
-    priceFromOpenPrices(code),
-    priceFromOffProduct(code),
-    priceFromUpcItemDb(code),
-    priceFromIcecat(code),
-    priceFromGoUpcPage(code),
-    priceFromCodecheck(code, shortName),
-    priceFromEanSearch(code),
-    priceFromRetailSearch(code, shortName),
-  ]);
-  const shopAmounts: number[] = [];
-  const otherAmounts: number[] = [];
-  for (const result of results) {
-    if (result.status !== "fulfilled" || !result.value) continue;
-    if (typeof result.value === "number") {
-      if (result.value > 0) otherAmounts.push(result.value);
-      continue;
-    }
-    const price = result.value.priceEur || 0;
-    if (price > 0) shopAmounts.push(price);
-  }
-  if (shopAmounts.length) return pickEuroPrice(shopAmounts);
-  return pickEuroPrice(otherAmounts);
+async function findEuroPrice(code: string, _name: string) {
+  if (!code) return 0;
+  const dm = await lookupDm(code);
+  return dm?.priceEur && dm.priceEur > 0 ? dm.priceEur : 0;
 }
 
 const CLIENT_SHOP_HOSTS = [
@@ -2098,7 +2259,7 @@ async function lookupRossmann(code: string): Promise<CatalogHit | null> {
       extractSize(picked),
       ingredients,
       "",
-      euroPriceFromText(markdown)
+      0
     );
     if (hit) return hit;
   }
@@ -2184,7 +2345,6 @@ async function lookupHtmlPage(url: string, code = ""): Promise<CatalogHit[]> {
       ""
   );
   const trusted = Boolean(jsonLdProductName(html));
-  const priceEur = jsonLdProduct(html).priceEur || euroPriceFromText(html);
   return names.map((name) => {
     const fullName = specificItemName(name, brand, size || extractSize(name));
     return {
@@ -2199,7 +2359,6 @@ async function lookupHtmlPage(url: string, code = ""): Promise<CatalogHit[]> {
         ])
       ),
       trusted,
-      priceEur: priceEur > 0 ? priceEur : undefined,
     };
   });
 }
@@ -2266,7 +2425,7 @@ function collectSearchUrls(html: string) {
 
 function looksLikeProductName(name: string) {
   const text = shortItemName(name);
-  if (!text || isJunkName(text)) return false;
+  if (!text || isJunkName(text) || isJunkTitle(text)) return false;
   if (!/[a-zäöüß]/i.test(text)) return false;
   const words = text.split(/\s+/).filter((w) => /[a-zäöüß]{2,}/i.test(w));
   return words.length >= 1;
@@ -2361,10 +2520,7 @@ async function lookupMarkdownPage(url: string, code: string): Promise<CatalogHit
   } else if (code && !htmlHasBarcode(markdown, code) && !markdown.includes(code)) {
     names = names.filter((name) => looksLikeProductName(name));
   }
-  const hits = hitsFromNames(names);
-  const priceEur = euroPriceFromText(markdown);
-  if (!(priceEur > 0) || /duckduckgo|google\.|bing\./i.test(url)) return hits;
-  return hits.map((hit) => ({ ...hit, priceEur }));
+  return hitsFromNames(names);
 }
 
 async function lookupSearchTitles(code: string): Promise<CatalogHit[]> {
@@ -2529,13 +2685,18 @@ function mergeHits(values: Array<CatalogHit | CatalogHit[] | null | undefined>) 
           ])
         ),
         trusted: Boolean(hit.trusted),
-        priceEur: hit.priceEur && hit.priceEur > 0 ? hit.priceEur : undefined,
+        source: hit.source,
+        priceEur:
+          hit.source === "dm" && hit.priceEur && hit.priceEur > 0
+            ? hit.priceEur
+            : undefined,
       };
       const key = normalized.name.toLowerCase();
       if (seen.has(key)) {
         const existing = hits.find((row) => row.name.toLowerCase() === key);
-        if (existing && !existing.priceEur && normalized.priceEur) {
+        if (existing && !existing.priceEur && normalized.priceEur && normalized.source === "dm") {
           existing.priceEur = normalized.priceEur;
+          existing.source = "dm";
         }
         continue;
       }
@@ -2697,9 +2858,33 @@ function nameIsSpecific(name: string) {
 
 const UNIT_WORDS = /^(ml|l|g|kg|mg|cl|pcs|stk|x)$/i;
 
+/** "Bach® RESCURA™ Night 20 ml - Shop Apotheke" -> "Bach RESCURA Night 20 ml". */
+function stripShopSuffix(name: string) {
+  return cleanText(name)
+    .replace(/[®™©]/g, "")
+    .replace(
+      /\s+[-–|:]\s+[^-–|:]*(apotheke|shop|online|kaufen|bestellen|drogerie|\bdm\b|rossmann|m(?:ü|ue)ller|amazon|idealo|ebay|medpex|docmorris|\.de\b|\.com\b)[^-–|:]*$/i,
+      ""
+    )
+    .replace(/\s+/g, " ")
+    .trim();
+}
+
+const LEFTOVER_GERMAN: Array<[RegExp, string]> = [
+  [/\btropfen\b/gi, "Drops"],
+  [/\balkoholfrei\b/gi, "Alcohol-Free"],
+  [/\bkapseln\b/gi, "Capsules"],
+  [/\btabletten\b/gi, "Tablets"],
+  [/\blutschtabletten\b/gi, "Lozenges"],
+  [/\bsalbe\b/gi, "Ointment"],
+  [/\bnacht\b/gi, "Night"],
+];
+
 /** "sanosan baby care lotion500ml" -> "Sanosan Baby Care Lotion 500 ml". */
 function tidyShopName(name: string) {
-  let text = cleanText(name)
+  let text = stripShopSuffix(name);
+  for (const [pattern, english] of LEFTOVER_GERMAN) text = text.replace(pattern, english);
+  text = text
     .replace(/([a-zà-ÿ])(\d)/gi, "$1 $2")
     .replace(/(\d)\s*(ml|l|g|kg|mg|cl|pcs|stk)\b/gi, (_, n: string, unit: string) => `${n} ${unit.toLowerCase()}`)
     .replace(/\s+/g, " ")
@@ -2719,7 +2904,6 @@ function hitFromWeb(web: WebProduct | null): CatalogHit | null {
     name: web.name,
     description: web.description || web.name,
     trusted: web.confident,
-    priceEur: web.priceEur,
   };
 }
 
@@ -2730,18 +2914,20 @@ async function lookupBarcode(barcode: string) {
   const dmPromise = lookupDm(main);
 
   async function withShopPrice(hits: CatalogHit[]) {
-    if (hits.some((hit) => hit.priceEur && hit.priceEur > 0)) return hits;
     const dm = await dmPromise;
-    const priceEur = dm?.priceEur;
-    if (!(priceEur && priceEur > 0)) {
-      if (!hits.length && dm) return [dm];
-      return hits;
+    const usable = hits.filter(
+      (hit) => !hitLooksWeak(hit.name) && !looksWrongLanguage(hit.name)
+    );
+    if (dm && !hitLooksWeak(dm.name) && !looksWrongLanguage(dm.name)) {
+      return mergeHits([dm, usable]);
     }
-    const base = hits.length ? hits : [dm];
-    return base.map((hit) => ({ ...hit, priceEur: hit.priceEur || priceEur }));
+    if (usable.some((hit) => hit.priceEur && hit.priceEur > 0)) return usable;
+    return usable;
   }
 
-  const cached = recallLookupCache(main).filter((hit) => !hitLooksWeak(hit.name));
+  const cached = recallLookupCache(main).filter(
+    (hit) => !hitLooksWeak(hit.name) && !looksWrongLanguage(hit.name) && !looksGerman(hit.name)
+  );
   if (cached.length) {
     const priced = await withShopPrice(cached);
     rememberLookupCache(main, priced);
@@ -2800,7 +2986,9 @@ async function lookupBarcode(barcode: string) {
     const ai = await identifyWithAi(main, "barcode");
     if (ai && !hitLooksWeak(ai.name)) hits = [ai];
   }
-  const usable = await withShopPrice(hits.filter((hit) => !hitLooksWeak(hit.name)));
+  const usable = await withShopPrice(
+    hits.filter((hit) => !hitLooksWeak(hit.name) && !looksWrongLanguage(hit.name))
+  );
   if (usable.length) rememberLookupCache(main, usable);
   return usable;
 }
@@ -2891,13 +3079,20 @@ export async function lookupProduct(input: { barcode?: string; name?: string }) 
   const cleanedMatches = (
     await Promise.all(
       matches
-        .filter((match) => !isJunkName(match.name) && !hitLooksWeak(match.name))
+        .filter(
+          (match) =>
+            !isJunkName(match.name) &&
+            !hitLooksWeak(match.name) &&
+            !looksWrongLanguage(match.name)
+        )
         .slice(0, 24)
         .map(async (match) => {
           const brand = labeledValue(match.description, "Brand");
           const size =
             extractSize(match.name, match.description) || labeledValue(match.description, "Size");
-          const name = tidyShopName(await englishShopName(match.name, brand, size));
+          const name = tidyShopName(
+            await englishShopName(stripShopSuffix(match.name), brand, size)
+          );
           return {
             ...match,
             name,
@@ -2907,21 +3102,40 @@ export async function lookupProduct(input: { barcode?: string; name?: string }) 
           };
         })
     )
-  ).filter((match) => match.name && !isJunkName(match.name));
+  ).filter(
+    (match) =>
+      match.name &&
+      !isJunkName(match.name) &&
+      !isJunkTitle(match.name) &&
+      !hitLooksWeak(match.name) &&
+      !looksWrongLanguage(match.name)
+  );
   // Never settle for a bare brand ("sanosan") when a full item name was also found.
   const specific = cleanedMatches.filter((match) => nameIsSpecific(match.name));
   const pool = specific.length ? specific : cleanedMatches;
   const trusted = pool.filter((match) => match.trusted);
   const englishName = (item: CatalogHit) =>
     !looksGerman(item.name) &&
-    /\b(shower gel|shampoo|conditioner|toothpaste|cream|deodorant|soap|oil|lotion|mineral water|carbonated|air fryer|coffee grinder|coffee machine|kettle|lip balm|hex bolt|wood screw|universal screw|mouthwash|ice cube|silicone|panel radiator|radiator)\b/i.test(
+    !looksWrongLanguage(item.name) &&
+    /\b(shower gel|shampoo|conditioner|toothpaste|cream|deodorant|soap|oil|lotion|mineral water|carbonated|air fryer|coffee grinder|coffee machine|kettle|lip balm|hex bolt|wood screw|universal screw|mouthwash|ice cube|silicone|panel radiator|radiator|colour catcher|color catcher|disinfectant|washing machine|sheets|wipes)\b/i.test(
       item.name
     ) &&
     !hitLooksWeak(item.name);
+  const notForeign = (item: CatalogHit) =>
+    !looksGerman(item.name) && !looksWrongLanguage(item.name) && !hitLooksWeak(item.name);
+  const shopHit = pool.find((item) => Boolean(item.trusted && item.priceEur && item.priceEur > 0 && notForeign(item)));
+  const byConsensus = (items: CatalogHit[]) =>
+    [...items].sort((a, b) => {
+      const overlap = (item: CatalogHit) =>
+        pool.reduce((sum, other) => sum + (other === item ? 0 : wordOverlap(item.name, other.name)), 0);
+      return overlap(b) + germanScore(b) / 1000 - (overlap(a) + germanScore(a) / 1000);
+    })[0];
   const hit =
-    trusted.find(englishName) ||
-    pool.find(englishName) ||
-    pool.find((item) => !looksGerman(item.name)) ||
+    shopHit ||
+    byConsensus(trusted.filter(englishName)) ||
+    byConsensus(pool.filter(englishName)) ||
+    byConsensus(trusted.filter(notForeign)) ||
+    byConsensus(pool.filter(notForeign)) ||
     trusted[0] ||
     pool[0] ||
     null;
@@ -2944,20 +3158,23 @@ export async function lookupProduct(input: { barcode?: string; name?: string }) 
     );
   }
   let priceEur =
-    (hit?.priceEur && hit.priceEur > 0 ? hit.priceEur : 0) ||
-    cleanedMatches.find((match) => match.priceEur && match.priceEur > 0)?.priceEur ||
+    (hit?.source === "dm" && hit.priceEur && hit.priceEur > 0 ? hit.priceEur : 0) ||
+    cleanedMatches.find(
+      (match) => match.source === "dm" && match.priceEur && match.priceEur > 0
+    )?.priceEur ||
     0;
-  if (!(priceEur > 0) && (barcode || name)) {
+  if (!(priceEur > 0) && barcode) {
     priceEur = await findEuroPrice(barcode, name);
-    if (!(priceEur > 0) && barcode) {
-      // Shops and price sites missed: let Claude search the web for this barcode's price.
-      const web = await lookupBarcodeOnWeb(barcode, name);
-      priceEur = web?.priceEur || 0;
-    }
-    if (priceEur > 0) {
-      if (hit) hit.priceEur = priceEur;
-      for (const match of cleanedMatches) {
-        if (!match.priceEur) match.priceEur = priceEur;
+  }
+  if (!(priceEur > 0) && barcode) {
+    // dm blocks direct requests, so read the dm.de price through web search limited to dm.de.
+    const dm = await lookupDmPriceOnWeb(barcode, name);
+    if (dm) {
+      priceEur = dm.priceEur;
+      // Save it with the match so the next scan of this barcode reuses it for free.
+      if (hit) {
+        hit.priceEur = dm.priceEur;
+        hit.source = "dm";
       }
     }
   }

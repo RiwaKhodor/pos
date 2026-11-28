@@ -115,20 +115,24 @@ export function ItemsList({
 
   const items = useMemo(() => {
     const q = lookFor.trim().toLowerCase();
-    if (!q) return initialItems;
-    return initialItems.filter((item) => {
-      const hay = [
-        item.name,
-        item.sku || "",
-        item.barcode || "",
-        item.categoryName || "",
-        item.containerCode || "",
-        item.description || "",
-      ]
-        .join(" ")
-        .toLowerCase();
-      return hay.includes(q);
-    });
+    const list = q
+      ? initialItems.filter((item) => {
+          const hay = [
+            item.name,
+            item.sku || "",
+            item.barcode || "",
+            item.categoryName || "",
+            item.containerCode || "",
+            item.description || "",
+          ]
+            .join(" ")
+            .toLowerCase();
+          return hay.includes(q);
+        })
+      : [...initialItems];
+    return list.sort((a, b) =>
+      a.name.localeCompare(b.name, "en", { sensitivity: "base", numeric: true })
+    );
   }, [initialItems, lookFor]);
 
   useEffect(() => {

@@ -12,7 +12,7 @@ import { useRouter } from "next/navigation";
 import { Role } from "@/lib/roles";
 import { StoreLogo } from "@/components/StoreLogo";
 import { UpdateNotice } from "@/components/UpdateNotice";
-import { wholesaleQtyError } from "@/lib/wholesale";
+import { wholesaleQtyError, wholesaleUnitPrice } from "@/lib/wholesale";
 import {
   computeMixedTender,
   DEFAULT_USD_TO_LBP,
@@ -35,6 +35,7 @@ import {
   tierPercent,
   cartLineUnitPrice,
   volumePercentForAmount,
+  volumeDiscountApplies,
   type PricingMode,
   type TierPercents,
 } from "@/lib/price-tiers";
@@ -124,6 +125,7 @@ export default function PosPage() {
   const [paymentMethodId, setPaymentMethodId] = useState("");
   const [pricingMode, setPricingMode] = useState<PricingMode>("REGULAR");
   const [tierPercents, setTierPercents] = useState<TierPercents>(EMPTY_TIERS);
+  const [wholesaleOfNormalPercent, setWholesaleOfNormalPercent] = useState(0);
   const [pricingLocked, setPricingLocked] = useState(false);
   const [discountInput, setDiscountInput] = useState("");
   const [editingQtyId, setEditingQtyId] = useState<string | null>(null);
@@ -177,6 +179,7 @@ export default function PosPage() {
       if (me.usdToLbpRate) setUsdToLbpRate(Number(me.usdToLbpRate) || DEFAULT_USD_TO_LBP);
       setTaxRate(Number(me.taxRate) || 0);
       if (me.priceTiers) setTierPercents({ ...EMPTY_TIERS, ...me.priceTiers });
+      setWholesaleOfNormalPercent(Number(me.wholesaleOfNormalPercent) || 0);
       setProducts(productsData.products || []);
       const list: PaymentMethod[] = methodsData.methods || [];
       setMethods(list);
@@ -269,12 +272,11 @@ export default function PosPage() {
         )
         .toFixed(2)
     );
-    const tierPct =
-      pricingMode === "WHOLESALE_PCT"
-        ? volumePercentForAmount(discountable, tierPercents)
-        : percentLines.length === 0
-          ? 0
-          : tierPercent(pricingMode, tierPercents);
+    const tierPct = volumeDiscountApplies(pricingMode)
+      ? volumePercentForAmount(discountable, tierPercents)
+      : percentLines.length === 0
+        ? 0
+        : tierPercent(pricingMode, tierPercents);
     if (tierPct > 0 && percentLines.length > 0) {
       const lines = percentLines.map((line) => ({
         amount: cartLineUnitPrice(line, pricingMode) * line.quantity,
@@ -335,7 +337,11 @@ export default function PosPage() {
   );
 
   const addProduct = useCallback((product: Product, qty = 1) => {
-    const wsPrice = product.wholesalePrice || 0;
+    const wsPrice = wholesaleUnitPrice(
+      product.price,
+      product.wholesalePrice || 0,
+      wholesaleOfNormalPercent
+    );
     const wsMin = product.wholesaleMinQty || 0;
     const wsMax = product.wholesaleMaxQty || 0;
     let amount = Math.max(1, Math.floor(qty));
@@ -401,7 +407,7 @@ export default function PosPage() {
             stock: product.stock,
             quantity: qtyOnHand,
             unit: "pc",
-            useFixedWholesale: false,
+            useFixedWholesale: pricingMode === "WHOLESALE" && wsPrice > 0,
           },
         ];
       }
@@ -420,7 +426,7 @@ export default function PosPage() {
           stock: product.stock,
           quantity: amount,
           unit: "pc",
-          useFixedWholesale: false,
+          useFixedWholesale: pricingMode === "WHOLESALE" && wsPrice > 0,
         },
       ];
     });
@@ -432,7 +438,7 @@ export default function PosPage() {
     setQtyInput("1");
     setShowProducts(false);
     searchRef.current?.focus();
-  }, []);
+  }, [pricingMode, wholesaleOfNormalPercent]);
 
   async function resolveAndAdd() {
     const term = query.trim();
@@ -622,6 +628,14 @@ export default function PosPage() {
   function choosePricing(mode: PricingMode) {
     setPricingMode(mode);
     if (isOwner) setPricingLocked(true);
+    if (mode === "WHOLESALE") {
+      setCart((prev) =>
+        prev.map((line) => ({
+          ...line,
+          useFixedWholesale: line.wholesalePrice > 0,
+        }))
+      );
+    }
   }
 
   function toggleFixedWholesale() {
@@ -632,8 +646,10 @@ export default function PosPage() {
     const line = cart.find((item) => item.productId === selectedId);
     if (!line) return;
     if (!(line.wholesalePrice > 0)) {
-      setError("This item has no wholesale price. Add one on the item page if you need it.");
-      setStatus("Most items use the receipt %. Wholesale price is only for a set amount.");
+      setError(
+        "This item has no wholesale price. Set Wholesale % of normal in Preferences, or type a wholesale price on the item."
+      );
+      setStatus("Receipt % needs a wholesale price only when you pick Fixed WS Price.");
       return;
     }
     const next = !line.useFixedWholesale;
@@ -780,6 +796,15 @@ export default function PosPage() {
       if (pricing.capped) {
         parts.push("Some items stop earlier because of Max discount %.");
       }
+    } else if (pricingMode === "WHOLESALE") {
+      parts.push(
+        "Price type: Wholesale — unit wholesale prices (item price, or Preferences % of normal)."
+      );
+      if (pricing.discountPercent > 0) {
+        parts.push(
+          `Lines not on Fixed WS Price take ${pricing.discountPercent}% off normal when the receipt is high enough.`
+        );
+      }
     } else if (pricingMode === "ONLINE") {
       parts.push("Price type: Online.");
     } else if (pricingMode === "RETAIL") {
@@ -877,6 +902,7 @@ export default function PosPage() {
           >
             <option value="REGULAR">Regular</option>
             <option value="WHOLESALE_PCT">Wholesale — % off receipt</option>
+            <option value="WHOLESALE">Wholesale — unit prices</option>
             {isOwner ? (
               <>
                 <option value="ONLINE">Online</option>
@@ -1012,7 +1038,7 @@ export default function PosPage() {
             title={
               selectedLine?.wholesalePrice
                 ? "Use this item’s wholesale price, or put it back on the receipt %"
-                : "This item has no wholesale price. Add one on the item page if you need it."
+                : "Set Wholesale % of normal in Preferences, or type a wholesale price on the item."
             }
           >
             FIXED WS PRICE
@@ -1088,7 +1114,14 @@ export default function PosPage() {
                     </tr>
                   </thead>
                   <tbody>
-                    {products.map((product) => (
+                    {[...products]
+                      .sort((a, b) =>
+                        a.name.localeCompare(b.name, "en", {
+                          sensitivity: "base",
+                          numeric: true,
+                        })
+                      )
+                      .map((product) => (
                       <tr
                         key={product.id}
                         onDoubleClick={() =>
@@ -1184,7 +1217,10 @@ export default function PosPage() {
                     max="100"
                     step="0.01"
                     value={discountInput}
-                    disabled={pricingMode === "WHOLESALE_PCT" || tierPercent(pricingMode, tierPercents) > 0}
+                    disabled={
+                      volumeDiscountApplies(pricingMode) ||
+                      tierPercent(pricingMode, tierPercents) > 0
+                    }
                     onChange={(e) => setDiscountInput(e.target.value)}
                     placeholder="0"
                   />
@@ -1199,6 +1235,7 @@ export default function PosPage() {
                 >
                   <option value="REGULAR">Regular</option>
                   <option value="WHOLESALE_PCT">Wholesale — % off receipt</option>
+                  <option value="WHOLESALE">Wholesale — unit prices</option>
                   {isOwner ? (
                     <>
                       <option value="ONLINE">Online</option>
@@ -1207,14 +1244,16 @@ export default function PosPage() {
                   ) : null}
                 </select>
                 <div className="mt-1 text-[11px] text-slate-600">
-                  {pricingMode === "WHOLESALE_PCT"
+                  {volumeDiscountApplies(pricingMode)
                     ? pricing.discount > 0
                       ? `${pricing.discountPercent}% off normal prices${
                           pricing.capped
                             ? " (some items hit Max discount %)"
                             : ""
                         } = -${formatUsd(pricing.discount)}`
-                      : "Receipt is under the next Preferences amount, so % off is 0 for now."
+                      : pricingMode === "WHOLESALE"
+                        ? "Items use wholesale unit prices. Receipt % off applies only to lines not on Fixed WS Price."
+                        : "Receipt is under the next Preferences amount, so % off is 0 for now."
                     : "No receipt %. Items stay at this price type, unless a line uses a wholesale price."}
                   {wholesaleLineCount > 0
                     ? ` ${wholesaleLineCount} line${wholesaleLineCount === 1 ? "" : "s"} at wholesale price.`

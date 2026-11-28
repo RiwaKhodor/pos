@@ -14,6 +14,7 @@ export async function GET() {
       currency: string;
       usdToLbpRate: number;
       taxRate: number;
+      wholesaleOfNormalPercent: number;
     };
     try {
       settings = await getStoreSettings();
@@ -25,6 +26,7 @@ export async function GET() {
         currency: cached?.currency || "USD",
         usdToLbpRate: cached?.usdToLbpRate || DEFAULT_USD_TO_LBP,
         taxRate: cached?.taxRate || 0,
+        wholesaleOfNormalPercent: cached?.wholesaleOfNormalPercent || 0,
       };
     }
     let cached: ReturnType<typeof readCachedSettings> = null;
@@ -40,6 +42,10 @@ export async function GET() {
       usdToLbpRate: cached?.usdToLbpRate || settings.usdToLbpRate,
       taxRate: cached?.taxRate ?? settings.taxRate,
       priceTiers: percentsFromSettings(cached),
+      wholesaleOfNormalPercent:
+        Number(cached?.wholesaleOfNormalPercent) ||
+        settings.wholesaleOfNormalPercent ||
+        0,
     });
   } catch (error) {
     return authErrorResponse(error);

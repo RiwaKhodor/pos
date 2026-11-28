@@ -1,6 +1,6 @@
 "use client";
 
-import { FormEvent, useState } from "react";
+import { FormEvent, useEffect, useState } from "react";
 import { useRouter } from "next/navigation";
 import { DEFAULT_EUR_TO_USD, DEFAULT_USD_TO_LBP, formatIntInput, formatRate } from "@/lib/fx";
 import { RECEIPT_PHONE } from "@/lib/store-info";
@@ -18,6 +18,7 @@ type Settings = {
   discAbove5000: number;
   discAbove7000: number;
   discAbove10000: number;
+  wholesaleOfNormalPercent: number;
 };
 
 export function SettingsForm({ settings }: { settings: Settings }) {
@@ -35,7 +36,23 @@ export function SettingsForm({ settings }: { settings: Settings }) {
     discAbove5000: String(settings.discAbove5000 || ""),
     discAbove7000: String(settings.discAbove7000 || ""),
     discAbove10000: String(settings.discAbove10000 || ""),
+    wholesaleOfNormalPercent: String(settings.wholesaleOfNormalPercent || ""),
   });
+  // The page may render from a stale local cache; load the real saved %.
+  useEffect(() => {
+    void fetch("/api/settings")
+      .then((res) => res.json())
+      .then((data) => {
+        const pct = Number(data.settings?.wholesaleOfNormalPercent);
+        if (!Number.isFinite(pct) || !(pct > 0)) return;
+        setForm((prev) =>
+          String(prev.wholesaleOfNormalPercent).trim() === ""
+            ? { ...prev, wholesaleOfNormalPercent: String(pct) }
+            : prev
+        );
+      })
+      .catch(() => undefined);
+  }, []);
   const [message, setMessage] = useState("");
   const [error, setError] = useState("");
 
@@ -61,6 +78,11 @@ export function SettingsForm({ settings }: { settings: Settings }) {
         discAbove5000: Number(form.discAbove5000 || 0),
         discAbove7000: Number(form.discAbove7000 || 0),
         discAbove10000: Number(form.discAbove10000 || 0),
+        // Empty box = keep the saved % (server will not reset it to 0).
+        wholesaleOfNormalPercent:
+          String(form.wholesaleOfNormalPercent).trim() === ""
+            ? null
+            : Number(form.wholesaleOfNormalPercent),
       }),
     });
     const data = await res.json();
@@ -69,6 +91,13 @@ export function SettingsForm({ settings }: { settings: Settings }) {
       return;
     }
     setMessage("Preferences saved");
+    const saved = Number(data.settings?.wholesaleOfNormalPercent);
+    if (Number.isFinite(saved)) {
+      setForm((prev) => ({
+        ...prev,
+        wholesaleOfNormalPercent: saved > 0 ? String(saved) : "",
+      }));
+    }
     router.refresh();
   }
 
@@ -169,12 +198,41 @@ export function SettingsForm({ settings }: { settings: Settings }) {
         </div>
 
         <fieldset className="desk-fieldset">
+          <legend>Wholesale from normal price</legend>
+          <p className="mb-2 text-[11px] text-slate-500">
+            This fills Wholesale Price on each item from that item’s Normal
+            Price. Wholesale = Normal × this % ÷ 100. Example: Normal $10 and
+            80 → Wholesale $8. Save here first, then type the Normal Price on
+            New Item. You can still type a different wholesale on one item.
+          </p>
+          <div className="desk-form-row">
+            <label htmlFor="wsOfNormal">Wholesale % of normal</label>
+            <input
+              id="wsOfNormal"
+              type="number"
+              min="0"
+              max="100"
+              step="0.01"
+              value={form.wholesaleOfNormalPercent}
+              placeholder="0"
+              onChange={(e) =>
+                setForm({
+                  ...form,
+                  wholesaleOfNormalPercent: e.target.value,
+                })
+              }
+            />
+          </div>
+        </fieldset>
+
+        <fieldset className="desk-fieldset">
           <legend>Wholesale receipt discount</legend>
           <p className="mb-2 text-[11px] text-slate-500">
             When POS is set to Wholesale — % off receipt, these percents come
             off the normal prices after the receipt reaches that amount. An
-            item can cap that with Max discount %. A wholesale price on a line
-            skips this % and uses that price instead.
+            item can cap that with Max discount %. On a mixed receipt, press
+            Fixed WS Price on a line to sell that item at its wholesale price
+            instead of this %.
           </p>
           {(
             [

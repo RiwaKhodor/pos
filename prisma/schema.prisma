@@ -202,6 +202,8 @@ model StoreSettings {
   discAbove5000  Decimal @default(0) @db.Decimal(8, 4)
   discAbove7000  Decimal @default(0) @db.Decimal(8, 4)
   discAbove10000 Decimal @default(0) @db.Decimal(8, 4)
+  // Wholesale unit = Normal × this % / 100 when the item has no wholesale price
+  wholesaleOfNormalPercent Decimal @default(0) @db.Decimal(8, 4)
 }
 
 model PushSubscription {

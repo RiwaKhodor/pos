@@ -5,7 +5,8 @@ import { Role } from "@/lib/roles";
 import { prisma } from "@/lib/prisma";
 import { revalidatePath } from "next/cache";
 import { bustCache } from "@/lib/data-cache";
-import { forgetCatalogProduct, mirrorProductRecord, readProduct } from "@/lib/catalog-cache";
+import { forgetCatalogProduct, mirrorProductRecord, readCachedSettings, readProduct } from "@/lib/catalog-cache";
+import { filledWholesalePrice } from "@/lib/wholesale";
 import { notifyOwners } from "@/lib/push";
 import { jsonMoney } from "@/lib/money";
 import { parseMaxDiscount } from "@/lib/price-tiers";
@@ -150,6 +151,12 @@ export async function PATCH(request: Request, { params }: Params) {
     if (body.customsDuty !== undefined) data.customsDuty = Number(body.customsDuty);
     if (body.wholesalePrice !== undefined) {
       data.wholesalePrice = Number(body.wholesalePrice);
+    }
+    {
+      const pct = readCachedSettings()?.wholesaleOfNormalPercent || 0;
+      const nextPrice = Number(data.price ?? before?.price ?? 0);
+      const given = Number(data.wholesalePrice ?? before?.wholesalePrice ?? 0);
+      data.wholesalePrice = filledWholesalePrice(nextPrice, given, pct);
     }
     if (body.onlinePrice !== undefined) data.onlinePrice = Number(body.onlinePrice || 0);
     if (body.retailPrice !== undefined) data.retailPrice = Number(body.retailPrice || 0);

@@ -51,6 +51,7 @@ export type CachedSettings = {
   discAbove5000: number;
   discAbove7000: number;
   discAbove10000: number;
+  wholesaleOfNormalPercent: number;
 };
 
 type ProductRow = {
@@ -141,7 +142,32 @@ export function readCachedSettings(): CachedSettings | null {
     discAbove5000: parsed.discAbove5000 || 0,
     discAbove7000: parsed.discAbove7000 || 0,
     discAbove10000: parsed.discAbove10000 || 0,
+    wholesaleOfNormalPercent: parsed.wholesaleOfNormalPercent || 0,
   };
+}
+
+/** Prisma client may omit this column; read SQL / local cache so it is not wiped to 0. */
+export async function loadWholesaleOfNormalPercent() {
+  let cached = 0;
+  try {
+    cached = readCachedSettings()?.wholesaleOfNormalPercent || 0;
+  } catch {
+    cached = 0;
+  }
+  try {
+    const rows = (await prisma.$queryRawUnsafe(
+      `SELECT "wholesaleOfNormalPercent" AS pct FROM "StoreSettings" WHERE id = 'default'`
+    )) as { pct: unknown }[];
+    if (rows[0] && rows[0].pct != null) {
+      const n = toNum(rows[0].pct);
+      if (n > 0) return Math.min(100, n);
+      if (cached > 0) return cached;
+      return 0;
+    }
+  } catch {
+    /* column missing, or database is offline */
+  }
+  return cached;
 }
 
 export function writeCachedSettings(settings: CachedSettings) {
@@ -765,7 +791,8 @@ export function listLocalItems(): LocalItemRow[] {
   const rows = localDb()
     .prepare("SELECT * FROM catalog_products ORDER BY name")
     .all() as ProductRow[];
-  return rows.map((row) => {
+  return rows
+    .map((row) => {
     const product = rowToProduct(row);
     const positive = product.lots.filter((lot) => lot.quantity > 0);
     const next = positive[0];
@@ -788,7 +815,10 @@ export function listLocalItems(): LocalItemRow[] {
       containerCode: containerLabel(product, headers),
       description: row.description || "",
     };
-  });
+  })
+    .sort((a, b) =>
+      a.name.localeCompare(b.name, "en", { sensitivity: "base", numeric: true })
+    );
 }
 
 type ContainerHeader = {
@@ -1123,6 +1153,7 @@ export async function refreshCatalogFromSupabase() {
       discAbove5000: toNum(settings?.discAbove5000),
       discAbove7000: toNum(settings?.discAbove7000),
       discAbove10000: toNum(settings?.discAbove10000),
+      wholesaleOfNormalPercent: await loadWholesaleOfNormalPercent(),
     };
     db.prepare(
       "INSERT INTO settings_cache (id, json) VALUES ('default', ?) ON CONFLICT(id) DO UPDATE SET json = excluded.json"

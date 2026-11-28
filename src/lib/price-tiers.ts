@@ -139,8 +139,12 @@ export function volumePercentForAmount(subtotal: number, percents: TierPercents)
   return tierPercent(suggestPriceMode(subtotal, percents), percents);
 }
 
+export function volumeDiscountApplies(mode: string) {
+  return mode === "WHOLESALE_PCT" || mode === "WHOLESALE";
+}
+
 export function pricingModeLabel(mode: string, percents?: TierPercents) {
-  if (mode === "WHOLESALE") return "Wholesale (item prices)";
+  if (mode === "WHOLESALE") return "Wholesale (unit prices)";
   if (mode === "WHOLESALE_PCT") return "Wholesale (% off receipt)";
   if (mode === "ONLINE") return "Online";
   if (mode === "RETAIL") return "Retail";
