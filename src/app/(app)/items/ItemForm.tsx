@@ -101,6 +101,8 @@ export function ItemForm({
   const nameRef = useRef<HTMLInputElement>(null);
   const lookupSeq = useRef(0);
   const lastLookupCode = useRef("");
+  // Barcode that found no name; the background search may still find it.
+  const [waitingBarcode, setWaitingBarcode] = useState<string | null>(null);
   const barcodeLookupTimer = useRef<ReturnType<typeof setTimeout> | null>(null);
   const [form, setForm] = useState<ItemFormValues>({
     ...emptyForm,
@@ -174,6 +176,50 @@ export function ItemForm({
       prev.wholesalePrice === String(ws) ? prev : { ...prev, wholesalePrice: String(ws) }
     );
   }, [form.price, wholesaleOfNormalPercent]);
+
+  // While a scanned barcode has no name, check every 30 s whether the background
+  // search (on this PC or another one) found it, and fill it in.
+  useEffect(() => {
+    if (!waitingBarcode) return;
+    if (form.barcode.trim() !== waitingBarcode) {
+      setWaitingBarcode(null);
+      return;
+    }
+    let tries = 0;
+    const timer = setInterval(async () => {
+      tries += 1;
+      if (tries > 120) {
+        clearInterval(timer);
+        return;
+      }
+      try {
+        const res = await fetch(`/api/items/lookup?barcode=${encodeURIComponent(waitingBarcode)}`);
+        const data = (await res.json()) as {
+          found?: boolean;
+          name?: string;
+          description?: string;
+          matches?: { name: string; description: string }[];
+        };
+        if (!data.found || !data.name) return;
+        clearInterval(timer);
+        setWaitingBarcode(null);
+        setCatalogMatches(data.matches || []);
+        setForm((prev) =>
+          prev.barcode.trim() !== waitingBarcode || prev.name.trim()
+            ? prev
+            : {
+                ...prev,
+                name: data.name || prev.name,
+                description: prev.description.trim() ? prev.description : data.description || "",
+              }
+        );
+        setScanHint("Found the name in the background. Check it, then enter the price.");
+      } catch {
+        /* try again in 30 s */
+      }
+    }, 30000);
+    return () => clearInterval(timer);
+  }, [waitingBarcode, form.barcode]);
 
   function dutyFor(containerId: string, cost: string) {
     if (!containerId) return null;
@@ -388,6 +434,7 @@ export function ItemForm({
       }
       const matches = (data.matches || []).filter((item) => item.name);
       setCatalogMatches(matches);
+      setWaitingBarcode(barcode && !(data.found && data.name) && !matches.length ? barcode : null);
       const itemId = initial?.id || form.id;
       setForm((prev) => {
         const fromScan = Boolean(barcode && data.found && data.name);
@@ -436,7 +483,7 @@ export function ItemForm({
       } else {
         setScanHint(
           barcode
-            ? "No catalog name for this barcode yet. Type the name from the pack."
+            ? "No name found yet. The app keeps searching in the background and fills the name here by itself. You can also tap Search on Google, or type the name from the pack."
             : "Type a clearer name if you want a description filled."
         );
       }
@@ -676,6 +723,16 @@ export function ItemForm({
       {scanHint ? (
         <div className="mb-2 border border-[#9bb4cc] bg-[#eef5ff] px-3 py-2 text-xs">
           {scanHint}
+          {waitingBarcode ? (
+            <a
+              className="desk-btn ml-2 inline-block no-underline"
+              href={`https://www.google.com/search?q=${encodeURIComponent(waitingBarcode)}`}
+              target="_blank"
+              rel="noreferrer"
+            >
+              Search on Google
+            </a>
+          ) : null}
         </div>
       ) : null}
       {catalogMatches.length > 0 ? (

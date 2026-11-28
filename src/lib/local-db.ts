@@ -43,6 +43,7 @@ export function localDb() {
   }
   db.exec(`
     PRAGMA journal_mode = WAL;
+    PRAGMA busy_timeout = 5000;
     PRAGMA foreign_keys = ON;
     CREATE TABLE IF NOT EXISTS meta (
       key TEXT PRIMARY KEY,

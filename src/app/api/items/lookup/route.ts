@@ -1,6 +1,7 @@
 import { NextResponse } from "next/server";
 import { authErrorResponse, requireRole } from "@/lib/auth";
-import { lookupProduct } from "@/lib/product-lookup";
+import { lookupProduct, recallFoundBarcode } from "@/lib/product-lookup";
+import { dropLookupRetry, queueLookupRetry } from "@/lib/lookup-retry";
 import { Role } from "@/lib/roles";
 import { readCachedSettings } from "@/lib/catalog-cache";
 import { prisma } from "@/lib/prisma";
@@ -26,6 +27,11 @@ export async function POST(request: Request) {
       return NextResponse.json({ error: "Scan a barcode or type a name." }, { status: 400 });
     }
     const result = await lookupProduct({ barcode, name });
+    // Nothing found: keep searching quietly in the background (free sites answer later).
+    if (barcode) {
+      if (result.found && result.name) dropLookupRetry(barcode);
+      else queueLookupRetry(barcode);
+    }
     let rate = readCachedSettings()?.eurToUsdRate || DEFAULT_EUR_TO_USD;
     try {
       const settings = await prisma.storeSettings.findUnique({
@@ -44,6 +50,25 @@ export async function POST(request: Request) {
         ...match,
         priceUsd: shopUsd(match.priceEur, rate),
       })),
+    });
+  } catch (error) {
+    return authErrorResponse(error);
+  }
+}
+
+/** Already-found names only (this PC or shared). The New Item form asks this every
+ * 30 seconds while a barcode has no name, so a background find fills in by itself. */
+export async function GET(request: Request) {
+  try {
+    await requireRole(Role.OWNER);
+    const barcode = new URL(request.url).searchParams.get("barcode")?.trim() || "";
+    if (!barcode) return NextResponse.json({ found: false, matches: [] });
+    const matches = await recallFoundBarcode(barcode);
+    return NextResponse.json({
+      found: matches.length > 0,
+      name: matches[0]?.name || "",
+      description: matches[0]?.description || "",
+      matches: matches.map((m) => ({ name: m.name, description: m.description || "" })),
     });
   } catch (error) {
     return authErrorResponse(error);

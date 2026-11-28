@@ -1,5 +1,6 @@
 import { searchCatalog } from "@/lib/catalog-cache";
 import { localDb } from "@/lib/local-db";
+import { recallSharedLookup, rememberSharedLookup } from "@/lib/shared-lookups";
 import { dmBookByBrandAndSize, dmBookProduct, pauseDmSync, rememberDmProducts } from "@/lib/dm-price-book";
 import { roundMoney } from "@/lib/fx";
 import { lookupBarcodeOnWeb, lookupDmPriceOnWeb, type WebProduct } from "@/lib/claude-web-lookup";
@@ -1520,7 +1521,30 @@ async function fetchHtml(url: string, timeoutMs = 4000, retries = 0) {
   return "";
 }
 
+// r.jina.ai allows about 20 requests a minute without an account. One scan used to
+// fire 20+ at once and get refused; keep at most 3 in flight, and pause after a 429.
+let jinaActive = 0;
+const jinaQueue: Array<() => void> = [];
+let jinaBlockedUntil = 0;
+
+async function withJinaSlot<T>(work: () => Promise<T>): Promise<T> {
+  if (jinaActive >= 3) await new Promise<void>((resolve) => jinaQueue.push(resolve));
+  jinaActive += 1;
+  try {
+    return await work();
+  } finally {
+    jinaActive -= 1;
+    jinaQueue.shift()?.();
+  }
+}
+
 async function fetchMarkdown(url: string, timeoutMs = 12000) {
+  if (Date.now() < jinaBlockedUntil) return "";
+  return withJinaSlot(() => fetchMarkdownNow(url, timeoutMs));
+}
+
+async function fetchMarkdownNow(url: string, timeoutMs: number) {
+  if (Date.now() < jinaBlockedUntil) return "";
   try {
     const res = await fetch(`https://r.jina.ai/${url}`, {
       headers: {
@@ -1530,6 +1554,10 @@ async function fetchMarkdown(url: string, timeoutMs = 12000) {
       signal: AbortSignal.timeout(timeoutMs),
       cache: "no-store",
     });
+    if (res.status === 429) {
+      jinaBlockedUntil = Date.now() + 60 * 1000;
+      return "";
+    }
     if (!res.ok) return "";
     const text = await res.text();
     if (!text || isChallengeHtml(text)) return "";
@@ -3012,6 +3040,8 @@ function recallLookupCache(barcode: string): CatalogHit[] {
 
 function rememberLookupCache(barcode: string, hits: CatalogHit[]) {
   if (!hits.length) return;
+  // Share with every PC through the online database.
+  void rememberSharedLookup(barcode, hits);
   try {
     ensureLookupCache();
     const digits = barcode.replace(/\D/g, "");
@@ -3115,6 +3145,17 @@ function hitFromWeb(web: WebProduct | null): CatalogHit | null {
   };
 }
 
+/** Names already found for this barcode (this PC or shared), without searching the web. */
+export async function recallFoundBarcode(barcode: string) {
+  const main = barcodeVariants(barcode)[0];
+  if (!main) return [] as CatalogHit[];
+  const usable = (hit: CatalogHit) =>
+    Boolean(hit.name) && !hitLooksWeak(hit.name) && !looksWrongLanguage(hit.name) && !isJunkName(hit.name);
+  const local = recallLookupCache(main).filter(usable);
+  if (local.length) return local;
+  return ((await recallSharedLookup(main)) as CatalogHit[]).filter(usable);
+}
+
 async function lookupBarcode(barcode: string) {
   const codes = barcodeVariants(barcode);
   const main = codes[0];
@@ -3138,6 +3179,16 @@ async function lookupBarcode(barcode: string) {
   );
   if (cached.length) {
     const priced = await withShopPrice(cached);
+    rememberLookupCache(main, priced);
+    return priced;
+  }
+
+  // Found before on any PC (shared through the online database).
+  const shared = (await recallSharedLookup(main)).filter(
+    (hit) => !hitLooksWeak(hit.name) && !looksWrongLanguage(hit.name) && !isJunkName(hit.name)
+  ) as CatalogHit[];
+  if (shared.length) {
+    const priced = await withShopPrice(shared);
     rememberLookupCache(main, priced);
     return priced;
   }
