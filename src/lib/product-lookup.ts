@@ -1,5 +1,6 @@
 import { searchCatalog } from "@/lib/catalog-cache";
 import { localDb } from "@/lib/local-db";
+import { dmBookByBrandAndSize, dmBookProduct, pauseDmSync, rememberDmProducts } from "@/lib/dm-price-book";
 import { roundMoney } from "@/lib/fx";
 import { lookupBarcodeOnWeb, lookupDmPriceOnWeb, type WebProduct } from "@/lib/claude-web-lookup";
 import { expandUpcE, gtinFromGs1, isValidGtin } from "@/lib/gtin";
@@ -611,6 +612,32 @@ async function translateAnyName(name: string, brand: string) {
     if (!translated || isJunkName(translated) || translated.length > 140) return "";
     return translated;
   };
+  // translate.googleapis.com answers 429 to server-side fetch; this endpoint does not.
+  try {
+    const res = await fetch(
+      `https://clients5.google.com/translate_a/t?client=dict-chrome-ex&sl=auto&tl=en&q=${encodeURIComponent(
+        payload
+      )}`,
+      { signal: AbortSignal.timeout(5000), cache: "no-store" }
+    );
+    if (res.ok) {
+      const json = (await res.json()) as unknown;
+      const first = Array.isArray(json) ? json[0] : null;
+      const text = Array.isArray(first) ? String(first[0] || "") : String(first || "");
+      const lang = Array.isArray(first) ? String(first[1] || "") : "";
+      if (lang === "en") {
+        nameTranslationCache.set(cacheKey, source);
+        return source;
+      }
+      const done = apply(text);
+      if (done && !looksGerman(done) && !looksWrongLanguage(done)) {
+        nameTranslationCache.set(cacheKey, done);
+        return done;
+      }
+    }
+  } catch {
+    /* try the other endpoint */
+  }
   try {
     const res = await fetch(
       `https://translate.googleapis.com/translate_a/single?client=gtx&sl=auto&tl=en&dt=t&q=${encodeURIComponent(
@@ -647,6 +674,12 @@ async function englishShopName(name: string, brand = "", size = "") {
     current = specificItemName(translated || current, brand, size);
   }
   if (looksGerman(current)) {
+    const translated = await translateAnyName(current, firstBrand(brand));
+    current = specificItemName(translated || current, brand, size);
+  }
+  // Any other language (Spanish, Italian, French…): always ask for English.
+  // Auto-detect returns English names unchanged.
+  if (current) {
     const translated = await translateAnyName(current, firstBrand(brand));
     current = specificItemName(translated || current, brand, size);
   }
@@ -1271,7 +1304,7 @@ function isJunkName(name: string) {
   }
   if (looksWrongLanguage(text)) return true;
   if (
-    /just a moment|attention required|verifizierung|checking if the site|unusual traffic|too many requests|no page for this barcode|wholesale joblot|bestseller|alle produkte|alle entfernen|direkt zum inhalt|suchergebnisse|1 ergebnis|filtern und sortieren|testbericht|allegro|merkandi|dauerhaft g(?:ü|ue)nstig|client challenge|spare \d+\s*%|gutes für alle|startseite|^suche$|^search$|^home$|^shop$|wochenangebote|was suchen sie/i.test(
+    /ricerca prodotti|cerca per codice|codice ean|buscar por|b[uú]squeda de productos|c[oó]digo ean|recherche de produits|rechercher par|just a moment|attention required|verifizierung|checking if the site|unusual traffic|too many requests|no page for this barcode|wholesale joblot|bestseller|alle produkte|alle entfernen|direkt zum inhalt|suchergebnisse|1 ergebnis|filtern und sortieren|testbericht|allegro|merkandi|dauerhaft g(?:ü|ue)nstig|client challenge|spare \d+\s*%|gutes für alle|startseite|^suche$|^search$|^home$|^shop$|wochenangebote|was suchen sie/i.test(
       text
     )
   ) {
@@ -1805,12 +1838,46 @@ function drugstoreHit(
   };
 }
 
-async function fetchDmSearch(query: string) {
+// dm answers "429 Too many requests" when searched too often. Remember answers and
+// back off after a 429 so normal barcode prices keep working.
+const dmSearchCache = new Map<string, { at: number; products: Record<string, unknown>[] }>();
+const DM_CACHE_MS = 30 * 60 * 1000;
+let dmBlockedUntil = 0;
+
+function dmIsBlocked() {
+  return Date.now() < dmBlockedUntil;
+}
+
+async function fetchDmSearch(query: string, pageSize = 10, patient = false) {
   if (!query) return [];
+  const key = `${pageSize}::${query.toLowerCase()}`;
+  const cached = dmSearchCache.get(key);
+  if (cached && Date.now() - cached.at < DM_CACHE_MS) return cached.products;
+  if (dmIsBlocked() && !patient) return [];
+  let products = await fetchDmSearchLive(query, pageSize);
+  // A barcode scan waits for dm instead of losing the price: retry after 5 s and 15 s.
+  for (const wait of patient ? [5000, 15000] : []) {
+    if (products || !dmIsBlocked()) break;
+    await new Promise((resolve) => setTimeout(resolve, wait));
+    products = await fetchDmSearchLive(query, pageSize);
+  }
+  if (products) {
+    dmBlockedUntil = 0;
+    rememberDmProducts(products);
+  }
+  if (products) {
+    if (dmSearchCache.size > 500) dmSearchCache.clear();
+    dmSearchCache.set(key, { at: Date.now(), products });
+  }
+  return products || [];
+}
+
+/** null = request failed (do not cache); [] = dm has no results. */
+async function fetchDmSearchLive(query: string, pageSize: number) {
   let json: Record<string, unknown> | null = null;
   try {
     const res = await fetch(
-      `https://product-search.services.dmtech.com/de/search?query=${encodeURIComponent(query)}&searchType=product&pageSize=10`,
+      `https://product-search.services.dmtech.com/de/search?query=${encodeURIComponent(query)}&searchType=product&pageSize=${pageSize}`,
       {
         headers: {
           "User-Agent": BROWSER_UA,
@@ -1821,16 +1888,23 @@ async function fetchDmSearch(query: string) {
         cache: "no-store",
       }
     );
+    if (res.status === 429) {
+      dmBlockedUntil = Date.now() + 60 * 1000;
+      pauseDmSync(2 * 60 * 1000);
+      return null;
+    }
     if (res.ok) json = (await res.json()) as Record<string, unknown>;
   } catch {
     json = null;
   }
   if (!json) {
+    // One retry with the plain user agent (not after a 429).
     json = await fetchJson(
-      `https://product-search.services.dmtech.com/de/search?query=${encodeURIComponent(query)}&searchType=product&pageSize=10`
+      `https://product-search.services.dmtech.com/de/search?query=${encodeURIComponent(query)}&searchType=product&pageSize=${pageSize}`
     );
   }
-  return (json?.products as Record<string, unknown>[]) || [];
+  if (!json) return null;
+  return (json.products as Record<string, unknown>[]) || [];
 }
 
 function dmPriceFromProduct(product: Record<string, unknown>) {
@@ -1914,7 +1988,9 @@ async function hitFromDmProduct(
 }
 
 async function lookupDm(code: string): Promise<CatalogHit | null> {
-  const products = await fetchDmSearch(code);
+  const saved = dmBookProduct(code);
+  if (saved) return hitFromDmProduct(saved, true);
+  const products = await fetchDmSearch(code, 10, true);
   const product = pickDmProduct(products, code, "");
   return hitFromDmProduct(product, true);
 }
@@ -2142,10 +2218,142 @@ async function priceFromRetailSearch(code: string, name: string) {
   return pickEuroPrice(amounts);
 }
 
-async function findEuroPrice(code: string, _name: string) {
+async function findEuroPrice(code: string, _name: string, altNames: string[] = []) {
   if (!code) return 0;
   const dm = await lookupDm(code);
-  return dm?.priceEur && dm.priceEur > 0 ? dm.priceEur : 0;
+  if (dm?.priceEur && dm.priceEur > 0) return dm.priceEur;
+  // dm often re-lists a product under a new barcode. Find the same product by name
+  // (same brand words and the same pack size) and use its dm price.
+  return dmPriceByName([...altNames, _name]);
+}
+
+async function dmPriceByName(rawNames: string[]) {
+  const names = [...new Set(rawNames.map((n) => cleanText(stripShopSuffix(n))).filter(Boolean))]
+    .filter((n) => n.length >= 6)
+    .slice(0, 2);
+  // At most 5 dm searches per scan so dm does not block us (429).
+  let budget = 5;
+  for (const name of names) {
+    const size = extractSize(name);
+    const noSize = (text: string) =>
+      text.replace(/\b\d+([.,]\d+)?\s*(ml|l|g|kg|stk|st)\b/gi, "").replace(/\s+/g, " ").trim().slice(0, 90);
+    // dm search only understands German names.
+    const german = await translateToGerman(name);
+    const brandWord = name.split(/\s+/)[0] || "";
+    const keyWords = [
+      ...new Set(
+        noSize(german || name)
+          .split(/[\s,.;:()]+/)
+          .slice(1)
+          .filter((w) => w.length >= 2 && !/^(und|mit|für|the|and|with|for)$/i.test(w))
+      ),
+    ].slice(0, 4);
+    const queries = [
+      german ? german.slice(0, 90) : name.slice(0, 90),
+      // Brand + one key word + size finds re-listed items whose dm title words differ.
+      ...keyWords.map((w) => `${brandWord} ${w}${size ? " " + size : ""}`),
+    ].filter(Boolean);
+    // Saved dm products first: no request to dm at all.
+    const fromBook = await bestDmMatch(name, size, dmBookByBrandAndSize(brandWord, size), german);
+    if (fromBook > 0) return fromBook;
+    for (const query of [...new Set(queries)]) {
+      if (budget <= 0 || dmIsBlocked()) return 0;
+      budget -= 1;
+      const best = await bestDmMatch(name, size, await fetchDmSearch(query, 30), german);
+      if (best > 0) return best;
+    }
+  }
+  return 0;
+}
+
+/** dm price of the product that is the same item (brand, pack size, words), or 0. */
+async function bestDmMatch(
+  name: string,
+  size: string,
+  allProducts: Record<string, unknown>[],
+  germanName = ""
+) {
+  // Only translate the closest few titles (by the German name), not every one.
+  const products = germanName
+    ? [...allProducts]
+        .map((product) => ({
+          product,
+          rank: nameTokenMatch(germanName, dmTitleFromProduct(product), ""),
+        }))
+        .sort((a, b) => b.rank - a.rank)
+        .slice(0, 8)
+        .map((row) => row.product)
+    : allProducts.slice(0, 12);
+  {
+    {
+      let best = 0;
+      let bestScore = 0;
+      for (const product of products) {
+        const brand = cleanText(
+          product.brandName ||
+            ((product.tileData as Record<string, unknown> | undefined)?.brand as
+              | Record<string, unknown>
+              | undefined)?.name ||
+            ""
+        );
+        const title = `${brand} ${dmTitleFromProduct(product)}`;
+        const productSize = extractSize(title, product.title);
+        // A different pack size is a different price (30 ml vs 100 ml).
+        if (size && productSize && size.replace(/\s/g, "").toLowerCase() !== productSize.replace(/\s/g, "").toLowerCase()) {
+          continue;
+        }
+        if (size && !productSize) continue;
+        // Same brand only.
+        const brandWord = brand.toLowerCase().split(/\s+/)[0] || "";
+        if (!brandWord || !name.toLowerCase().includes(brandWord)) continue;
+        const price = dmPriceFromProduct(product);
+        if (!(price > 0)) continue;
+        // dm titles are German and our names English: compare both in English.
+        const english = await translateAnyName(dmTitleFromProduct(product), "");
+        const score = Math.max(
+          Math.min(wordOverlap(name, title), wordOverlap(title, name)),
+          nameTokenMatch(name, `${brand} ${english}`, brand)
+        );
+        if (price > 0 && score > bestScore) {
+          bestScore = score;
+          best = price;
+        }
+      }
+      if (bestScore >= 0.6 && best > 0) return best;
+    }
+  }
+  return 0;
+}
+
+async function translateToGerman(text: string) {
+  try {
+    const res = await fetch(
+      `https://clients5.google.com/translate_a/t?client=dict-chrome-ex&sl=auto&tl=de&q=${encodeURIComponent(text)}`,
+      { signal: AbortSignal.timeout(5000), cache: "no-store" }
+    );
+    if (!res.ok) return "";
+    const json = (await res.json()) as unknown;
+    const first = Array.isArray(json) ? json[0] : null;
+    const out = Array.isArray(first) ? String(first[0] || "") : String(first || "");
+    return cleanText(out) === cleanText(text) ? "" : cleanText(out);
+  } catch {
+    return "";
+  }
+}
+
+/** Share of the item's own words (not brand, not size) found in the other name. */
+function nameTokenMatch(name: string, other: string, brand: string) {
+  const tokens = (text: string) =>
+    text
+      .toLowerCase()
+      .replace(/(\w)-(?=\w)/g, "$1")
+      .split(/[^a-z0-9äöüß]+/i)
+      .filter((w) => w.length >= 3 && !/^\d/.test(w) && !/^(ml|kg|stk|pcs|the|and|for|with)$/.test(w));
+  const brandWords = new Set(tokens(brand));
+  const mine = [...new Set(tokens(name))].filter((w) => !brandWords.has(w));
+  if (mine.length < 2) return 0;
+  const theirs = new Set(tokens(other));
+  return mine.filter((w) => theirs.has(w)).length / mine.length;
 }
 
 const CLIENT_SHOP_HOSTS = [
@@ -2863,7 +3071,7 @@ function stripShopSuffix(name: string) {
   return cleanText(name)
     .replace(/[®™©]/g, "")
     .replace(
-      /\s+[-–|:]\s+[^-–|:]*(apotheke|shop|online|kaufen|bestellen|drogerie|\bdm\b|rossmann|m(?:ü|ue)ller|amazon|idealo|ebay|medpex|docmorris|\.de\b|\.com\b)[^-–|:]*$/i,
+      /\s+[-–|:]\s+[^-–|:]*(apotheke|shop|online|kaufen|bestellen|drogerie|\bdm\b|rossmann|m(?:ü|ue)ller|amazon|idealo|ebay|medpex|docmorris|inci ?beauty|\.de\b|\.com\b|\.es\b|\.it\b|\.fr\b)[^-–|:]*$/i,
       ""
     )
     .replace(/\s+/g, " ")
@@ -3164,7 +3372,11 @@ export async function lookupProduct(input: { barcode?: string; name?: string }) 
     )?.priceEur ||
     0;
   if (!(priceEur > 0) && barcode) {
-    priceEur = await findEuroPrice(barcode, name);
+    priceEur = await findEuroPrice(
+      barcode,
+      name,
+      matches.map((match) => match.name)
+    );
   }
   if (!(priceEur > 0) && barcode) {
     // dm blocks direct requests, so read the dm.de price through web search limited to dm.de.

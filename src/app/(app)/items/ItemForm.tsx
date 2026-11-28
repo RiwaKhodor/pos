@@ -100,6 +100,7 @@ export function ItemForm({
   const barcodeRef = useRef<HTMLInputElement>(null);
   const nameRef = useRef<HTMLInputElement>(null);
   const lookupSeq = useRef(0);
+  const lastLookupCode = useRef("");
   const barcodeLookupTimer = useRef<ReturnType<typeof setTimeout> | null>(null);
   const [form, setForm] = useState<ItemFormValues>({
     ...emptyForm,
@@ -251,6 +252,7 @@ export function ItemForm({
   async function onBarcodeScan(raw?: string) {
     const code = (raw ?? form.barcode).trim();
     if (!code) return;
+    lastLookupCode.current = code;
 
     if (mode === "create") {
       let res: Response;
@@ -687,7 +689,13 @@ export function ItemForm({
                 key={`${match.name}-${index}`}
                 type="button"
                 className="text-left text-xs text-[#174a8c] underline"
+                // Keep the barcode box from losing focus (its blur starts a new lookup
+                // that would put the first name back).
+                onMouseDown={(e) => e.preventDefault()}
                 onClick={() => {
+                  // Cancel any lookup still running so it cannot overwrite this choice.
+                  lookupSeq.current++;
+                  lastLookupCode.current = form.barcode.trim();
                   setForm((prev) => ({
                     ...prev,
                     name: match.name,
@@ -737,7 +745,10 @@ export function ItemForm({
                   }
                 }}
                 onBlur={(e) => {
-                  if (e.currentTarget.value.trim()) {
+                  const value = e.currentTarget.value.trim();
+                  // Same barcode already looked up: don't search again (and don't
+                  // replace the name the user picked).
+                  if (value && value !== lastLookupCode.current) {
                     void onBarcodeScan(e.currentTarget.value);
                   }
                 }}
